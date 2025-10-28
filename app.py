@@ -175,7 +175,20 @@ def show_success_message(path: str) -> None:
     st.session_state["success_path"] = path
     st.session_state["trigger_balloons"] = True
     reset_form_state()
-    st.experimental_rerun()
+    # Streamlit 1.27+ reemplaza ``st.experimental_rerun`` por ``st.rerun``.
+    # Para mantener compatibilidad con versiones anteriores, intentamos usar la
+    # nueva API y, si no está disponible, recurrimos al nombre experimental.
+    rerun = getattr(st, "rerun", None)
+    if callable(rerun):
+        rerun()
+        return
+
+    experimental_rerun = getattr(st, "experimental_rerun", None)
+    if callable(experimental_rerun):
+        experimental_rerun()
+        return
+
+    raise AttributeError("Streamlit no dispone de 'st.rerun' ni 'st.experimental_rerun'.")
 
 
 # =========================================================
