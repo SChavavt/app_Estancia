@@ -13,7 +13,7 @@ from github import Github, GithubException
 # CONFIG
 # =========================================================
 st.set_page_config(page_title="Smart Core – Estancia", page_icon="🧠", layout="wide")
-st.title("🧠 Smart Core – Cuestionario y Ranking por Categoría")
+st.title("🧠 Smart Core – Cuestionario")
 st.caption(
     "Comparte tu nombre, edad y género, responde el cuestionario y obtén tu SmartScore personalizado."
 )
@@ -25,6 +25,35 @@ DATA_FILES = {
 }
 
 RESULTS_PATH_IN_REPO = "Resultados_SmartScore.xlsx"  # se crea/actualiza vía API de GitHub
+
+INITIAL_FORM_VALUES = {
+    "nombre_completo": "",
+    "edad": 1,
+    "genero": "Femenino",
+    "w_portion": 3,
+    "w_diet": 5,
+    "w_salt": 3,
+    "w_fat": 3,
+    "w_natural": 3,
+    "w_convenience": 3,
+    "w_price": 3,
+}
+
+RESET_FORM_VALUES = {
+    "nombre_completo": "",
+    "edad": 1,
+    "genero": "Femenino",
+    "w_portion": 0,
+    "w_diet": 0,
+    "w_salt": 0,
+    "w_fat": 0,
+    "w_natural": 0,
+    "w_convenience": 0,
+    "w_price": 0,
+}
+
+for key, value in INITIAL_FORM_VALUES.items():
+    st.session_state.setdefault(key, value)
 
 # =========================================================
 # HELPERS
@@ -77,19 +106,36 @@ def _reorder_person_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df_reordenado
 
 
+def reset_form_state() -> None:
+    for key, value in RESET_FORM_VALUES.items():
+        st.session_state[key] = value
+
+
+def show_success_message(path: str) -> None:
+    st.success(f"🎈 Tus respuestas fueron guardadas con éxito en '{path}'.")
+    st.balloons()
+    reset_form_state()
+
+
 # =========================================================
 # 1) DATOS DE LA PERSONA + CUESTIONARIO
 # =========================================================
-st.header("1) Cuestionario de preferencias")
+st.header("Cuestionario de preferencias")
 
 with st.form("cuestionario_form"):
     st.subheader("Datos de quien responde")
-    nombre_completo = st.text_input("Nombre completo")
+    nombre_completo = st.text_input("Nombre completo", key="nombre_completo")
     col_info_1, col_info_2 = st.columns(2)
     with col_info_1:
-        edad = st.number_input("Edad", min_value=1, max_value=120, step=1)
+        edad = st.number_input(
+            "Edad", min_value=1, max_value=120, step=1, key="edad"
+        )
     with col_info_2:
-        genero = st.selectbox("Género", ("Femenino", "Masculino", "Prefiero no decir"))
+        genero = st.selectbox(
+            "Género",
+            ("Femenino", "Masculino", "Prefiero no decir"),
+            key="genero",
+        )
 
     st.subheader("Importancia de cada aspecto")
     st.caption("Desliza hacia la derecha para indicar mayor importancia en cada aspecto.")
@@ -99,44 +145,51 @@ with st.form("cuestionario_form"):
             "🔹 ¿Qué tan importante es el tamaño de la porción?",
             0,
             5,
-            3,
+            value=st.session_state["w_portion"],
+            key="w_portion",
         )
         w_diet = st.slider(
             "🔹 ¿Qué tan importante es llevar una dieta sana?",
-            1,
+            0,
             7,
-            5,
+            value=st.session_state["w_diet"],
+            key="w_diet",
         )
         w_salt = st.slider(
             "🔹 ¿Qué tan importante es bajo en sal?",
             0,
             5,
-            3,
+            value=st.session_state["w_salt"],
+            key="w_salt",
         )
         w_fat = st.slider(
             "🔹 ¿Qué tan importante es bajo en grasa saturada?",
             0,
             5,
-            3,
+            value=st.session_state["w_fat"],
+            key="w_fat",
         )
     with col2:
         w_natural = st.slider(
             "🔹 ¿Qué tan importante es que use ingredientes naturales/orgánicos?",
             0,
             5,
-            3,
+            value=st.session_state["w_natural"],
+            key="w_natural",
         )
         w_convenience = st.slider(
             "🔹 ¿Qué tan importante es que sea rápido y fácil de preparar?",
             0,
             5,
-            3,
+            value=st.session_state["w_convenience"],
+            key="w_convenience",
         )
         w_price = st.slider(
             "🔹 ¿Qué tan importante es precio bajo / buena relación calidad-precio?",
             0,
             5,
-            3,
+            value=st.session_state["w_price"],
+            key="w_price",
         )
 
     submitted = st.form_submit_button("Enviar respuestas")
@@ -278,10 +331,7 @@ if submitted:
                                 message=(f"Creación inicial de {ruta_archivo} ({persona_nombre})"),
                                 content=buffer.getvalue(),
                             )
-                            st.success(
-                                f"🎈🎈 Tus respuestas fueron guardadas con éxito en '{ruta_archivo}'."
-                            )
-                            st.balloons()
+                            show_success_message(ruta_archivo)
                         except Exception as create_error:
                             st.error(f"❌ Error al crear '{ruta_archivo}': {create_error}")
                     else:
@@ -312,10 +362,7 @@ if submitted:
                             content=buffer.getvalue(),
                             sha=contents.sha,
                         )
-                        st.success(
-                            f"🎈🎈 Tus respuestas fueron guardadas con éxito en '{ruta_archivo}'."
-                        )
-                        st.balloons()
+                        show_success_message(ruta_archivo)
                     except Exception as update_error:
                         st.error(f"❌ Error al actualizar '{ruta_archivo}': {update_error}")
 
