@@ -6,7 +6,7 @@ from datetime import datetime
 
 import pandas as pd
 import streamlit as st
-from github import Github
+from github import Github, GithubException
 
 # =========================================================
 # CONFIG
@@ -21,7 +21,7 @@ DATA_FILES = {
     "Ready to Eat": "data/Productos_ReadyToEat_SmartScore.xlsx",
 }
 
-RESULTS_PATH_IN_REPO = "data/Resultados_SmartScore.xlsx"  # se crea/actualiza vía API de GitHub
+RESULTS_PATH_IN_REPO = "Resultados_SmartScore.xlsx"  # se crea/actualiza vía API de GitHub
 
 # =========================================================
 # HELPERS
@@ -126,7 +126,9 @@ with st.expander("Ver muestra de atributos normalizados"):
 # =========================================================
 st.header("3) Cálculo del Smart Score y Ranking por categoría")
 
-if st.button("🧮 Calcular SmartScore y Rankear"):
+calcular = st.button("🧮 Calcular SmartScore y Rankear")
+
+if calcular:
     sum_w = sum(weights.values()) if sum(weights.values()) != 0 else 1.0
     df_calc["SmartScore"] = (
         weights["salt"] * df_calc["Sodio_norm"] +
@@ -141,22 +143,32 @@ if st.button("🧮 Calcular SmartScore y Rankear"):
     df_resultado = df_calc[["Producto", "Categoría", "Categoría__App", "SmartScore", "Comentarios Clave"]].copy()
     df_resultado = df_resultado.sort_values("SmartScore", ascending=False).reset_index(drop=True)
 
-    st.success("✅ SmartScore personalizado calculado para cada producto.")
-    st.dataframe(df_resultado.head(20))
-
-    st.subheader("🏆 Top por categoría (3 mejores)")
     topk = (
         df_resultado.sort_values("SmartScore", ascending=False)
         .groupby("Categoría__App")
         .head(3)
         .reset_index(drop=True)
     )
-    st.dataframe(topk)
 
-    st.subheader("📊 Resumen por categoría")
     stats = df_resultado.groupby("Categoría__App")["SmartScore"].agg(["mean", "std", "min", "max"]).reset_index()
     stats.columns = ["Categoría", "Promedio", "Desviación Std", "Mínimo", "Máximo"]
-    st.dataframe(stats)
+
+    st.session_state["df_resultado"] = df_resultado
+    st.session_state["topk"] = topk
+    st.session_state["stats"] = stats
+    st.session_state["weights_snapshot"] = weights.copy()
+
+if "df_resultado" in st.session_state:
+    st.success("✅ SmartScore personalizado calculado para cada producto.")
+    st.dataframe(st.session_state["df_resultado"].head(20))
+
+if "topk" in st.session_state:
+    st.subheader("🏆 Top por categoría (3 mejores)")
+    st.dataframe(st.session_state["topk"])
+
+if "stats" in st.session_state:
+    st.subheader("📊 Resumen por categoría")
+    st.dataframe(st.session_state["stats"])
 
     # =====================================================
     # 4) GUARDADO EN GITHUB (versión final corregida)
@@ -164,64 +176,112 @@ if st.button("🧮 Calcular SmartScore y Rankear"):
     st.header("4) Guardado en GitHub (opcional)")
     st.caption("Configura en Streamlit Cloud un secret llamado `GITHUB_TOKEN` con permiso `repo` y usa el repo público `app_Estancia`.")
 
-    try:
-        g = Github(st.secrets["GITHUB_TOKEN"])
-        user = g.get_user()
-        st.info(f"Conectado como: {user.login}")
-        repos = [r.name for r in user.get_repos()]
-        if "app_Estancia" in repos:
-            st.success("✅ Repositorio 'app_Estancia' encontrado.")
-        else:
-            st.warning("⚠️ No se encontró el repo 'app_Estancia'. Revisa el nombre o permisos del token.")
-    except Exception as e:
-        st.error(f"❌ Error al conectar con GitHub: {e}")
+    github_client = None
+    github_user = None
 
-    usuario = st.text_input("Tu nombre o identificador (para registro):", "")
-
-    if usuario and st.button("💾 Guardar resultados en GitHub"):
+    if "GITHUB_TOKEN" in st.secrets:
         try:
-            repo = g.get_user().get_repo("app_Estancia")
-            ruta_archivo = RESULTS_PATH_IN_REPO
-
-            # Serializar datos
-            pesos_str = str(weights)
-            top_lines = [f"{r['Categoría__App']}: {r['Producto']} ({r['SmartScore']:.3f})" for _, r in topk.iterrows()]
-            top_str = " | ".join(top_lines)
-            nuevo_registro = pd.DataFrame([{
-                "Usuario": usuario,
-                "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "Pesos": pesos_str,
-                "TopPorCategoria": top_str,
-            }])
-
+            github_client = Github(st.secrets["GITHUB_TOKEN"])
+            github_user = github_client.get_user()
+            st.info(f"Conectado como: {github_user.login}")
             try:
-                contents = repo.get_contents(ruta_archivo)
-                excel_data = base64.b64decode(contents.content)
-                df_existente = pd.read_excel(BytesIO(excel_data))
-                df_nuevo = pd.concat([df_existente, nuevo_registro], ignore_index=True)
-                buffer = BytesIO()
-                df_nuevo.to_excel(buffer, index=False)
-
-                repo.update_file(
-                    path=ruta_archivo,
-                    message=f"Actualización SmartScore desde Streamlit ({usuario})",
-                    content=buffer.getvalue(),
-                    sha=contents.sha
-                )
-                st.success("✅ Resultados actualizados correctamente en GitHub.")
-
-            except Exception:
-                buffer = BytesIO()
-                nuevo_registro.to_excel(buffer, index=False)
-                repo.create_file(
-                    path=ruta_archivo,
-                    message=f"Creación inicial de Resultados_SmartScore.xlsx ({usuario})",
-                    content=buffer.getvalue()
-                )
-                st.success("✅ Archivo creado y resultados guardados correctamente en GitHub.")
-
+                github_user.get_repo("app_Estancia")
+                st.success("✅ Repositorio 'app_Estancia' encontrado.")
+            except GithubException as repo_error:
+                if repo_error.status == 404:
+                    st.warning("⚠️ No se encontró el repo 'app_Estancia'. Revisa el nombre o permisos del token.")
+                else:
+                    datos_repo = getattr(repo_error, "data", {})
+                    mensaje_repo = datos_repo.get("message", str(repo_error)) if isinstance(datos_repo, dict) else str(repo_error)
+                    st.error(f"❌ Error al verificar el repositorio: {mensaje_repo}")
         except Exception as e:
-            st.error(f"❌ Error al guardar en GitHub: {e}")
+            st.error(f"❌ Error al conectar con GitHub: {e}")
+            github_client = None
+            github_user = None
+    else:
+        st.warning("⚠️ Configura el secret `GITHUB_TOKEN` con permisos de repo para habilitar el guardado automático.")
+
+    if "df_resultado" not in st.session_state or "topk" not in st.session_state:
+        st.info("Calcula tu SmartScore antes de intentar guardar los resultados.")
+    else:
+        usuario = st.text_input("Tu nombre o identificador (para registro):", "").strip()
+        save_status = st.empty()
+
+        if not usuario:
+            st.info("Ingresa tu nombre para mostrar el botón de guardado.")
+        else:
+            if st.button("💾 Guardar resultados", key="guardar_resultados"):
+                if github_client is None or github_user is None:
+                    save_status.error("❌ No se pudo conectar a GitHub. Verifica el secret `GITHUB_TOKEN`.")
+                else:
+                    try:
+                        repo = github_user.get_repo("app_Estancia")
+                    except GithubException as repo_error:
+                        if repo_error.status == 404:
+                            save_status.error("❌ No se encontró el repositorio 'app_Estancia'.")
+                        else:
+                            datos_repo = getattr(repo_error, "data", {})
+                            mensaje_repo = datos_repo.get("message", str(repo_error)) if isinstance(datos_repo, dict) else str(repo_error)
+                            save_status.error(f"❌ Error al acceder al repositorio: {mensaje_repo}")
+                    except Exception as repo_generic_error:
+                        save_status.error(f"❌ Error al acceder al repositorio: {repo_generic_error}")
+                    else:
+                        ruta_archivo = RESULTS_PATH_IN_REPO
+                        pesos_actuales = st.session_state.get("weights_snapshot", weights.copy())
+                        topk_df = st.session_state["topk"]
+                        top_lines = [
+                            f"{r['Categoría__App']}: {r['Producto']} ({r['SmartScore']:.3f})"
+                            for _, r in topk_df.iterrows()
+                        ]
+                        top_str = " | ".join(top_lines)
+                        nuevo_registro = pd.DataFrame([
+                            {
+                                "Usuario": usuario,
+                                "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                "Pesos": str(pesos_actuales),
+                                "TopPorCategoria": top_str,
+                            }
+                        ])
+
+                        try:
+                            contents = repo.get_contents(ruta_archivo)
+                        except GithubException as gh_error:
+                            if gh_error.status == 404:
+                                try:
+                                    buffer = BytesIO()
+                                    nuevo_registro.to_excel(buffer, index=False)
+                                    buffer.seek(0)
+                                    repo.create_file(
+                                        path=ruta_archivo,
+                                        message=f"Creación inicial de {ruta_archivo} ({usuario})",
+                                        content=buffer.getvalue()
+                                    )
+                                    save_status.success(f"✅ Archivo '{ruta_archivo}' creado y resultados guardados correctamente.")
+                                except Exception as create_error:
+                                    save_status.error(f"❌ Error al crear '{ruta_archivo}': {create_error}")
+                            else:
+                                datos_archivo = getattr(gh_error, "data", {})
+                                mensaje_archivo = datos_archivo.get("message", str(gh_error)) if isinstance(datos_archivo, dict) else str(gh_error)
+                                save_status.error(f"❌ No se pudo leer '{ruta_archivo}': {mensaje_archivo}")
+                        except Exception as read_error:
+                            save_status.error(f"❌ Error al leer '{ruta_archivo}': {read_error}")
+                        else:
+                            try:
+                                excel_data = base64.b64decode(contents.content)
+                                df_existente = pd.read_excel(BytesIO(excel_data))
+                                df_nuevo = pd.concat([df_existente, nuevo_registro], ignore_index=True)
+                                buffer = BytesIO()
+                                df_nuevo.to_excel(buffer, index=False)
+                                buffer.seek(0)
+                                repo.update_file(
+                                    path=ruta_archivo,
+                                    message=f"Actualización SmartScore desde Streamlit ({usuario})",
+                                    content=buffer.getvalue(),
+                                    sha=contents.sha
+                                )
+                                save_status.success(f"✅ Archivo '{ruta_archivo}' actualizado con tus resultados.")
+                            except Exception as update_error:
+                                save_status.error(f"❌ Error al actualizar '{ruta_archivo}': {update_error}")
 
 # =========================================================
 # FOOTER
