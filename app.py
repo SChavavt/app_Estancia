@@ -1,5 +1,6 @@
 # app.py
 import re
+import json
 import base64
 from io import BytesIO
 from datetime import datetime
@@ -229,17 +230,26 @@ if "stats" in st.session_state:
                         ruta_archivo = RESULTS_PATH_IN_REPO
                         pesos_actuales = st.session_state.get("weights_snapshot", weights.copy())
                         topk_df = st.session_state["topk"]
-                        top_lines = [
-                            f"{r['Categoría__App']}: {r['Producto']} ({r['SmartScore']:.3f})"
-                            for _, r in topk_df.iterrows()
-                        ]
-                        top_str = " | ".join(top_lines)
+                        topk_df = topk_df.sort_values(
+                            ["Categoría__App", "SmartScore"], ascending=[True, False]
+                        )
+
+                        top_columns = {}
+                        for categoria, group in topk_df.groupby("Categoría__App"):
+                            for rank, (_, fila) in enumerate(group.iterrows(), start=1):
+                                base_col = f"{categoria} · Top {rank}"
+                                top_columns[f"{base_col} · Producto"] = fila["Producto"]
+                                top_columns[f"{base_col} · SmartScore"] = f"{fila['SmartScore']:.3f}"
+                                comentario = fila.get("Comentarios Clave", "")
+                                if isinstance(comentario, str) and comentario.strip():
+                                    top_columns[f"{base_col} · Comentarios"] = comentario.strip()
+
                         nuevo_registro = pd.DataFrame([
                             {
                                 "Usuario": usuario,
                                 "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                "Pesos": str(pesos_actuales),
-                                "TopPorCategoria": top_str,
+                                "Pesos": json.dumps(pesos_actuales, ensure_ascii=False, indent=2),
+                                **top_columns,
                             }
                         ])
 
