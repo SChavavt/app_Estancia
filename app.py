@@ -92,47 +92,48 @@ with st.form("cuestionario_form"):
         genero = st.selectbox("Género", ("Femenino", "Masculino", "Prefiero no decir"))
 
     st.subheader("Importancia de cada aspecto")
+    st.caption("Desliza hacia la derecha para indicar mayor importancia en cada aspecto.")
     col1, col2 = st.columns(2)
     with col1:
         w_portion = st.slider(
-            "🔹 ¿Qué tan importante es el tamaño de la porción? (Desliza hacia la derecha para indicar mayor importancia)",
+            "🔹 ¿Qué tan importante es el tamaño de la porción?",
             0,
             5,
             3,
         )
         w_diet = st.slider(
-            "🔹 ¿Qué tan importante es llevar una dieta sana? (Desliza hacia la derecha para indicar mayor importancia)",
+            "🔹 ¿Qué tan importante es llevar una dieta sana?",
             1,
             7,
             5,
         )
         w_salt = st.slider(
-            "🔹 ¿Qué tan importante es bajo en sal? (Desliza hacia la derecha para indicar mayor importancia)",
+            "🔹 ¿Qué tan importante es bajo en sal?",
             0,
             5,
             3,
         )
         w_fat = st.slider(
-            "🔹 ¿Qué tan importante es bajo en grasa saturada? (Desliza hacia la derecha para indicar mayor importancia)",
+            "🔹 ¿Qué tan importante es bajo en grasa saturada?",
             0,
             5,
             3,
         )
     with col2:
         w_natural = st.slider(
-            "🔹 ¿Qué tan importante es que use ingredientes naturales/orgánicos? (Desliza hacia la derecha para indicar mayor importancia)",
+            "🔹 ¿Qué tan importante es que use ingredientes naturales/orgánicos?",
             0,
             5,
             3,
         )
         w_convenience = st.slider(
-            "🔹 ¿Qué tan importante es que sea rápido y fácil de preparar? (Desliza hacia la derecha para indicar mayor importancia)",
+            "🔹 ¿Qué tan importante es que sea rápido y fácil de preparar?",
             0,
             5,
             3,
         )
         w_price = st.slider(
-            "🔹 ¿Qué tan importante es precio bajo / buena relación calidad-precio? (Desliza hacia la derecha para indicar mayor importancia)",
+            "🔹 ¿Qué tan importante es precio bajo / buena relación calidad-precio?",
             0,
             5,
             3,
