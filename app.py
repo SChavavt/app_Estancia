@@ -55,6 +55,9 @@ RESET_FORM_VALUES = {
 for key, value in INITIAL_FORM_VALUES.items():
     st.session_state.setdefault(key, value)
 
+st.session_state.setdefault("success_path", "")
+st.session_state.setdefault("trigger_balloons", False)
+
 # =========================================================
 # HELPERS
 # =========================================================
@@ -111,16 +114,69 @@ def reset_form_state() -> None:
         st.session_state[key] = value
 
 
+def _df_to_excel_bytes(df: pd.DataFrame) -> bytes:
+    buffer = BytesIO()
+    df.to_excel(buffer, index=False)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def append_record_to_results(
+    repo, ruta_archivo: str, nuevo_registro: pd.DataFrame, persona_nombre: str
+) -> None:
+    try:
+        contents = repo.get_contents(ruta_archivo)
+    except GithubException as gh_error:
+        if gh_error.status == 404:
+            repo.create_file(
+                path=ruta_archivo,
+                message=f"Creación inicial de {ruta_archivo} ({persona_nombre})",
+                content=_df_to_excel_bytes(nuevo_registro),
+            )
+            return
+        raise
+
+    for intento in range(2):
+        excel_data = base64.b64decode(contents.content)
+        df_existente = pd.read_excel(BytesIO(excel_data))
+        df_existente = _reorder_person_columns(df_existente)
+        df_nuevo = pd.concat([df_existente, nuevo_registro], ignore_index=True)
+        df_nuevo = _reorder_person_columns(df_nuevo)
+        try:
+            repo.update_file(
+                path=ruta_archivo,
+                message=f"Actualización SmartScore desde Streamlit ({persona_nombre})",
+                content=_df_to_excel_bytes(df_nuevo),
+                sha=contents.sha,
+            )
+            return
+        except GithubException as update_error:
+            if update_error.status == 409 and intento == 0:
+                contents = repo.get_contents(ruta_archivo)
+                continue
+            raise
+
+
 def show_success_message(path: str) -> None:
-    st.success(f"🎈 Tus respuestas fueron guardadas con éxito en '{path}'.")
-    st.balloons()
+    st.session_state["success_path"] = path
+    st.session_state["trigger_balloons"] = True
     reset_form_state()
+    st.experimental_rerun()
 
 
 # =========================================================
 # 1) DATOS DE LA PERSONA + CUESTIONARIO
 # =========================================================
 st.header("Cuestionario de preferencias")
+
+if st.session_state.get("success_path"):
+    st.success(
+        f"🎈 Tus respuestas fueron guardadas con éxito en '{st.session_state['success_path']}'."
+    )
+    if st.session_state.get("trigger_balloons", False):
+        st.balloons()
+    st.session_state["success_path"] = ""
+    st.session_state["trigger_balloons"] = False
 
 with st.form("cuestionario_form"):
     st.subheader("Datos de quien responde")
@@ -319,52 +375,24 @@ if submitted:
                 nuevo_registro = _reorder_person_columns(nuevo_registro)
 
                 try:
-                    contents = repo.get_contents(ruta_archivo)
+                    append_record_to_results(
+                        repo=repo,
+                        ruta_archivo=ruta_archivo,
+                        nuevo_registro=nuevo_registro,
+                        persona_nombre=persona_nombre,
+                    )
                 except GithubException as gh_error:
-                    if gh_error.status == 404:
-                        try:
-                            buffer = BytesIO()
-                            nuevo_registro.to_excel(buffer, index=False)
-                            buffer.seek(0)
-                            repo.create_file(
-                                path=ruta_archivo,
-                                message=(f"Creación inicial de {ruta_archivo} ({persona_nombre})"),
-                                content=buffer.getvalue(),
-                            )
-                            show_success_message(ruta_archivo)
-                        except Exception as create_error:
-                            st.error(f"❌ Error al crear '{ruta_archivo}': {create_error}")
-                    else:
-                        datos_archivo = getattr(gh_error, "data", {})
-                        mensaje_archivo = (
-                            datos_archivo.get("message", str(gh_error))
-                            if isinstance(datos_archivo, dict)
-                            else str(gh_error)
-                        )
-                        st.error(f"❌ No se pudo leer '{ruta_archivo}': {mensaje_archivo}")
-                except Exception as read_error:
-                    st.error(f"❌ Error al leer '{ruta_archivo}': {read_error}")
+                    datos_archivo = getattr(gh_error, "data", {})
+                    mensaje_archivo = (
+                        datos_archivo.get("message", str(gh_error))
+                        if isinstance(datos_archivo, dict)
+                        else str(gh_error)
+                    )
+                    st.error(f"❌ Error al sincronizar '{ruta_archivo}' con GitHub: {mensaje_archivo}")
+                except Exception as update_error:
+                    st.error(f"❌ Error al actualizar '{ruta_archivo}': {update_error}")
                 else:
-                    try:
-                        excel_data = base64.b64decode(contents.content)
-                        df_existente = pd.read_excel(BytesIO(excel_data))
-                        df_existente = _reorder_person_columns(df_existente)
-                        df_nuevo = pd.concat([df_existente, nuevo_registro], ignore_index=True)
-                        df_nuevo = _reorder_person_columns(df_nuevo)
-                        buffer = BytesIO()
-                        df_nuevo.to_excel(buffer, index=False)
-                        buffer.seek(0)
-                        repo.update_file(
-                            path=ruta_archivo,
-                            message=(
-                                f"Actualización SmartScore desde Streamlit ({persona_nombre})"
-                            ),
-                            content=buffer.getvalue(),
-                            sha=contents.sha,
-                        )
-                        show_success_message(ruta_archivo)
-                    except Exception as update_error:
-                        st.error(f"❌ Error al actualizar '{ruta_archivo}': {update_error}")
+                    show_success_message(ruta_archivo)
 
 # =========================================================
 # FOOTER
