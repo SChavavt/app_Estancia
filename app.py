@@ -18,6 +18,7 @@ LANGUAGE_CONTENT = {
     "English": {
         "page_title": "🧠 Smart Core – Questionnaire",
         "page_caption": "Share your name, age, and gender, answer the questionnaire, and receive your personalized SmartScore.",
+        "intro_text": "Use this short form to tell us what matters most when choosing instant food products so we can tailor your SmartScore recommendations.",
         "questionnaire_header": "Preference questionnaire",
         "respondent_data_subheader": "Respondent details",
         "name_label": "Full name",
@@ -47,7 +48,8 @@ LANGUAGE_CONTENT = {
     },
     "Español": {
         "page_title": "🧠 Smart Core – Cuestionario",
-        "page_caption": "Comparte tu nombre, edad y género, responde el cuestionario y obtén tu SmartScore personalizado.",
+        "page_caption": "Comparte tu nombre, edad y género, responde el cuestionario para poder obtener tu SmartScore personalizado.",
+        "intro_text": "Este breve cuestionario nos ayuda a entender qué valoras al elegir productos de comida instantánea y nos permite personalizar tu SmartScore.",
         "questionnaire_header": "Cuestionario de preferencias",
         "respondent_data_subheader": "Datos de quien responde",
         "name_label": "Nombre completo",
@@ -111,6 +113,7 @@ def t(key: str, **kwargs) -> str:
 
 st.title(t("page_header"))
 st.caption(t("page_caption"))
+st.markdown(t("intro_text"))
 
 DATA_FILES = {
     "Instant Noodles": "data/Productos_Instant_Noodles_SmartScore.xlsx",
