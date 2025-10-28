@@ -21,7 +21,7 @@ DATA_FILES = {
     "Ready to Eat": "data/Productos_ReadyToEat_SmartScore.xlsx",
 }
 
-RESULTS_PATH_IN_REPO = "data/Resultados_SmartScore.xlsx"  # se crea/actualiza vía API de GitHub
+RESULTS_FILENAME = "Resultados_SmartScore.xlsx"  # Se guarda en la raíz del repo
 
 # =========================================================
 # HELPERS
@@ -35,7 +35,6 @@ def _read_all_products(files_dict: dict) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True)
 
 def _extract_minutes(s: str) -> float:
-    """Extrae minutos de cadenas como '5 minutos', 'Listo para comer', etc."""
     if not isinstance(s, str):
         return 0.0
     s_low = s.lower().strip()
@@ -45,7 +44,6 @@ def _extract_minutes(s: str) -> float:
     return float(m.group(1)) if m else 0.0
 
 def _to_bool_natural(x) -> int:
-    """Devuelve 1 si contiene 'sí'/'si'/'organic'/'orgánico', 0 en otro caso."""
     try:
         s = str(x).lower()
     except Exception:
@@ -60,9 +58,9 @@ def normalize_minmax(series: pd.Series) -> pd.Series:
     return (series - smin) / denom
 
 # =========================================================
-# 1) CUESTIONARIO → PESOS
+# 1️⃣ CUESTIONARIO → PESOS
 # =========================================================
-st.header("1) Cuestionario de preferencias → cálculo de PESOS")
+st.header("1️⃣ Cuestionario de preferencias → cálculo de PESOS")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -88,9 +86,9 @@ with st.expander("Ver pesos normalizados"):
     st.json(weights)
 
 # =========================================================
-# 2) CARGA Y NORMALIZACIÓN DE ATRIBUTOS
+# 2️⃣ CARGA Y NORMALIZACIÓN DE ATRIBUTOS
 # =========================================================
-st.header("2) Carga y normalización de atributos")
+st.header("2️⃣ Carga y normalización de atributos")
 
 try:
     df_all = _read_all_products(DATA_FILES)
@@ -122,9 +120,9 @@ with st.expander("Ver muestra de atributos normalizados"):
     )
 
 # =========================================================
-# 3) SMART SCORE Y RANKING
+# 3️⃣ SMART SCORE Y RANKING
 # =========================================================
-st.header("3) Cálculo del Smart Score y Ranking por categoría")
+st.header("3️⃣ Cálculo del Smart Score y Ranking por categoría")
 
 if st.button("🧮 Calcular SmartScore y Rankear"):
     sum_w = sum(weights.values()) if sum(weights.values()) != 0 else 1.0
@@ -159,69 +157,66 @@ if st.button("🧮 Calcular SmartScore y Rankear"):
     st.dataframe(stats)
 
     # =====================================================
-    # 4) GUARDADO EN GITHUB (versión final corregida)
+    # 4️⃣ GUARDADO EN GITHUB (en raíz del repo)
     # =====================================================
-    st.header("4) Guardado en GitHub (opcional)")
-    st.caption("Configura en Streamlit Cloud un secret llamado `GITHUB_TOKEN` con permiso `repo` y usa el repo público `app_Estancia`.")
+    st.header("4️⃣ Guardado en GitHub (opcional)")
+    st.caption("Asegúrate de tener configurado el secret `GITHUB_TOKEN` con permiso `repo` y usar el repo `app_Estancia`.")
 
     try:
         g = Github(st.secrets["GITHUB_TOKEN"])
         user = g.get_user()
-        st.info(f"Conectado como: {user.login}")
-        repos = [r.name for r in user.get_repos()]
-        if "app_Estancia" in repos:
-            st.success("✅ Repositorio 'app_Estancia' encontrado.")
-        else:
-            st.warning("⚠️ No se encontró el repo 'app_Estancia'. Revisa el nombre o permisos del token.")
+        repo = g.get_user().get_repo("app_Estancia")
+        st.success(f"✅ Conectado como {user.login} y repositorio '{repo.name}' disponible.")
     except Exception as e:
-        st.error(f"❌ Error al conectar con GitHub: {e}")
+        st.error(f"❌ No se pudo conectar con GitHub: {e}")
+        st.stop()
 
-    usuario = st.text_input("Tu nombre o identificador (para registro):", "")
+    usuario = st.text_input("Tu nombre o identificador (para registro):")
 
-    if usuario and st.button("💾 Guardar resultados en GitHub"):
-        try:
-            repo = g.get_user().get_repo("app_Estancia")
-            ruta_archivo = RESULTS_PATH_IN_REPO
-
-            # Serializar datos
-            pesos_str = str(weights)
-            top_lines = [f"{r['Categoría__App']}: {r['Producto']} ({r['SmartScore']:.3f})" for _, r in topk.iterrows()]
-            top_str = " | ".join(top_lines)
-            nuevo_registro = pd.DataFrame([{
-                "Usuario": usuario,
-                "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "Pesos": pesos_str,
-                "TopPorCategoria": top_str,
-            }])
-
+    if usuario:
+        if st.button("💾 Guardar resultados"):
             try:
-                contents = repo.get_contents(ruta_archivo)
-                excel_data = base64.b64decode(contents.content)
-                df_existente = pd.read_excel(BytesIO(excel_data))
-                df_nuevo = pd.concat([df_existente, nuevo_registro], ignore_index=True)
-                buffer = BytesIO()
-                df_nuevo.to_excel(buffer, index=False)
+                # Preparar registro
+                pesos_str = str(weights)
+                top_lines = [f"{r['Categoría__App']}: {r['Producto']} ({r['SmartScore']:.3f})" for _, r in topk.iterrows()]
+                top_str = " | ".join(top_lines)
+                nuevo_registro = pd.DataFrame([{
+                    "Usuario": usuario,
+                    "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "Pesos": pesos_str,
+                    "TopPorCategoria": top_str,
+                }])
 
-                repo.update_file(
-                    path=ruta_archivo,
-                    message=f"Actualización SmartScore desde Streamlit ({usuario})",
-                    content=buffer.getvalue(),
-                    sha=contents.sha
-                )
-                st.success("✅ Resultados actualizados correctamente en GitHub.")
+                # Intentar leer el archivo existente
+                try:
+                    contents = repo.get_contents(RESULTS_FILENAME)
+                    excel_data = base64.b64decode(contents.content)
+                    df_existente = pd.read_excel(BytesIO(excel_data))
+                    df_nuevo = pd.concat([df_existente, nuevo_registro], ignore_index=True)
 
-            except Exception:
-                buffer = BytesIO()
-                nuevo_registro.to_excel(buffer, index=False)
-                repo.create_file(
-                    path=ruta_archivo,
-                    message=f"Creación inicial de Resultados_SmartScore.xlsx ({usuario})",
-                    content=buffer.getvalue()
-                )
-                st.success("✅ Archivo creado y resultados guardados correctamente en GitHub.")
+                    buffer = BytesIO()
+                    df_nuevo.to_excel(buffer, index=False)
+                    repo.update_file(
+                        path=RESULTS_FILENAME,
+                        message=f"Actualización SmartScore ({usuario})",
+                        content=buffer.getvalue(),
+                        sha=contents.sha
+                    )
+                    st.success(f"✅ Resultados de {usuario} actualizados correctamente en el repositorio.")
 
-        except Exception as e:
-            st.error(f"❌ Error al guardar en GitHub: {e}")
+                except Exception:
+                    # Si el archivo no existe, lo crea
+                    buffer = BytesIO()
+                    nuevo_registro.to_excel(buffer, index=False)
+                    repo.create_file(
+                        path=RESULTS_FILENAME,
+                        message=f"Creación inicial de Resultados_SmartScore.xlsx ({usuario})",
+                        content=buffer.getvalue()
+                    )
+                    st.success(f"✅ Archivo creado y resultados de {usuario} guardados correctamente en GitHub.")
+
+            except Exception as e:
+                st.error(f"❌ Error al guardar los resultados en GitHub: {e}")
 
 # =========================================================
 # FOOTER
