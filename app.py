@@ -3,7 +3,6 @@ import re
 import base64
 from io import BytesIO
 from datetime import datetime
-
 import pandas as pd
 import streamlit as st
 from github import Github
@@ -21,10 +20,10 @@ DATA_FILES = {
     "Ready to Eat": "data/Productos_ReadyToEat_SmartScore.xlsx",
 }
 
-RESULTS_FILENAME = "Resultados_SmartScore.xlsx"  # Se guarda en la raíz del repo
+RESULTS_FILENAME = "Resultados_SmartScore.xlsx"  # archivo se guardará en la raíz del repo
 
 # =========================================================
-# HELPERS
+# FUNCIONES AUXILIARES
 # =========================================================
 def _read_all_products(files_dict: dict) -> pd.DataFrame:
     frames = []
@@ -48,7 +47,7 @@ def _to_bool_natural(x) -> int:
         s = str(x).lower()
     except Exception:
         return 0
-    if any(k in s for k in ["sí", "si", "orgánico", "organico", "organic"]):
+    if any(k in s for k in ["sí", "si", "organico", "orgánico", "organic"]):
         return 1
     return 0
 
@@ -111,14 +110,6 @@ except KeyError as e:
     st.error(f"Falta una columna esperada en tus Excel: {e}")
     st.stop()
 
-with st.expander("Ver muestra de atributos normalizados"):
-    st.dataframe(
-        df_calc[
-            ["Producto", "Categoría", "Sodio_norm", "Grasa_norm", "Precio_norm",
-             "Conveniencia_norm", "Dieta_norm", "Porción_norm", "Natural_norm"]
-        ].head(10)
-    )
-
 # =========================================================
 # 3️⃣ SMART SCORE Y RANKING
 # =========================================================
@@ -151,29 +142,25 @@ if st.button("🧮 Calcular SmartScore y Rankear"):
     )
     st.dataframe(topk)
 
-    st.subheader("📊 Resumen por categoría")
-    stats = df_resultado.groupby("Categoría__App")["SmartScore"].agg(["mean", "std", "min", "max"]).reset_index()
-    stats.columns = ["Categoría", "Promedio", "Desviación Std", "Mínimo", "Máximo"]
-    st.dataframe(stats)
-
     # =====================================================
-    # 4️⃣ GUARDADO EN GITHUB (en raíz del repo)
+    # 4️⃣ GUARDADO EN GITHUB (en raíz)
     # =====================================================
     st.header("4️⃣ Guardado en GitHub (opcional)")
-    st.caption("Asegúrate de tener configurado el secret `GITHUB_TOKEN` con permiso `repo` y usar el repo `app_Estancia`.")
 
     try:
         g = Github(st.secrets["GITHUB_TOKEN"])
         user = g.get_user()
         repo = g.get_user().get_repo("app_Estancia")
-        st.success(f"✅ Conectado como {user.login} y repositorio '{repo.name}' disponible.")
+        st.success(f"✅ Conectado como {user.login}, repositorio '{repo.name}' listo.")
     except Exception as e:
-        st.error(f"❌ No se pudo conectar con GitHub: {e}")
+        st.error(f"❌ Error al conectar con GitHub: {e}")
         st.stop()
 
-    usuario = st.text_input("Tu nombre o identificador (para registro):")
+    st.info("🖋️ Escribe tu nombre o identificador y luego presiona **Guardar resultados** para crear o actualizar el archivo en GitHub.")
+    usuario = st.text_input("Nombre o identificador:")
 
-    if usuario:
+    # ✅ Solo mostrar el botón cuando hay nombre
+    if usuario.strip() != "":
         if st.button("💾 Guardar resultados"):
             try:
                 # Preparar registro
@@ -203,9 +190,9 @@ if st.button("🧮 Calcular SmartScore y Rankear"):
                         sha=contents.sha
                     )
                     st.success(f"✅ Resultados de {usuario} actualizados correctamente en el repositorio.")
+                    st.balloons()
 
                 except Exception:
-                    # Si el archivo no existe, lo crea
                     buffer = BytesIO()
                     nuevo_registro.to_excel(buffer, index=False)
                     repo.create_file(
@@ -214,6 +201,7 @@ if st.button("🧮 Calcular SmartScore y Rankear"):
                         content=buffer.getvalue()
                     )
                     st.success(f"✅ Archivo creado y resultados de {usuario} guardados correctamente en GitHub.")
+                    st.balloons()
 
             except Exception as e:
                 st.error(f"❌ Error al guardar los resultados en GitHub: {e}")
