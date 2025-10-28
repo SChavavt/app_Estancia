@@ -21,7 +21,7 @@ DATA_FILES = {
     "Ready to Eat": "data/Productos_ReadyToEat_SmartScore.xlsx",
 }
 
-RESULTS_PATH_IN_REPO = "data/Resultados_SmartScore.xlsx"   # se crea/actualiza vía API de GitHub
+RESULTS_PATH_IN_REPO = "data/Resultados_SmartScore.xlsx"  # se crea/actualiza vía API de GitHub
 
 # =========================================================
 # HELPERS
@@ -35,20 +35,17 @@ def _read_all_products(files_dict: dict) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True)
 
 def _extract_minutes(s: str) -> float:
-    """
-    Extrae minutos de cadenas como '5 minutos', 'Listo para comer', etc.
-    'Listo...' => 0 min.
-    """
+    """Extrae minutos de cadenas como '5 minutos', 'Listo para comer', etc."""
     if not isinstance(s, str):
         return 0.0
     s_low = s.lower().strip()
-    if "listo" in s_low:  # listo para comer/snack
+    if "listo" in s_low:
         return 0.0
     m = re.search(r"(\d+)", s_low)
     return float(m.group(1)) if m else 0.0
 
 def _to_bool_natural(x) -> int:
-    """Devuelve 1 si el texto contiene 'sí'/'si'/'organic'/'orgánico', 0 en otro caso."""
+    """Devuelve 1 si contiene 'sí'/'si'/'organic'/'orgánico', 0 en otro caso."""
     try:
         s = str(x).lower()
     except Exception:
@@ -58,13 +55,12 @@ def _to_bool_natural(x) -> int:
     return 0
 
 def normalize_minmax(series: pd.Series) -> pd.Series:
-    """(x - min) / (max - min) con manejo de división por cero."""
     smin, smax = series.min(), series.max()
     denom = (smax - smin) if (smax - smin) != 0 else 1.0
     return (series - smin) / denom
 
 # =========================================================
-# 1) CUESTIONARIO → PESOS (mismos rangos que tu script)
+# 1) CUESTIONARIO → PESOS
 # =========================================================
 st.header("1) Cuestionario de preferencias → cálculo de PESOS")
 
@@ -79,7 +75,7 @@ with col2:
     w_convenience = st.slider("🔹 ¿Qué tan importante es que sea rápido y fácil de preparar?", 0, 5, 3)
     w_price = st.slider("🔹 ¿Qué tan importante es precio bajo / buena relación calidad-precio?", 0, 5, 3)
 
-# Normalización EXACTA a los denominadores usados en tu lógica
+# Normalización de pesos
 weights = {
     "portion": w_portion / 5.0,
     "diet": w_diet / 7.0,
@@ -93,7 +89,7 @@ with st.expander("Ver pesos normalizados"):
     st.json(weights)
 
 # =========================================================
-# 2) CARGA Y NORMALIZACIÓN DE ATRIBUTOS DE PRODUCTOS
+# 2) CARGA Y NORMALIZACIÓN DE ATRIBUTOS
 # =========================================================
 st.header("2) Carga y normalización de atributos")
 
@@ -105,16 +101,11 @@ except Exception as e:
 
 df_calc = df_all.copy()
 
-# Atributos esperados por nombre (ajusta si tu cabecera es distinta)
-# - Calorías, Sodio_mg, Grasa Saturada_g, Proteína_g, Naturales, Tiempo_Preparación, Precio_USD
-# Invertidos (menos es mejor): sodio, grasa, precio, minutos preparación
-# Directos (más es mejor): proteína (dieta), calorías (porción), naturales->binario
 try:
     # INVERTIDOS
     df_calc["Sodio_norm"] = 1 - normalize_minmax(df_calc["Sodio_mg"])
     df_calc["Grasa_norm"] = 1 - normalize_minmax(df_calc["Grasa Saturada_g"])
     df_calc["Precio_norm"] = 1 - normalize_minmax(df_calc["Precio_USD"])
-
     minutos = df_calc["Tiempo_Preparación"].apply(_extract_minutes)
     df_calc["Conveniencia_norm"] = 1 - normalize_minmax(minutos)
 
@@ -122,7 +113,6 @@ try:
     df_calc["Dieta_norm"] = normalize_minmax(df_calc["Proteína_g"])
     df_calc["Porción_norm"] = normalize_minmax(df_calc["Calorías"])
     df_calc["Natural_norm"] = df_calc["Naturales"].apply(_to_bool_natural).astype(float)
-
 except KeyError as e:
     st.error(f"Falta una columna esperada en tus Excel: {e}")
     st.stop()
@@ -132,11 +122,11 @@ with st.expander("Ver muestra de atributos normalizados"):
         df_calc[
             ["Producto", "Categoría", "Sodio_norm", "Grasa_norm", "Precio_norm",
              "Conveniencia_norm", "Dieta_norm", "Porción_norm", "Natural_norm"]
-        ].head(12)
+        ].head(10)
     )
 
 # =========================================================
-# 3) SMART SCORE POR PRODUCTO (promedio ponderado / suma de pesos)
+# 3) SMART SCORE Y RANKING
 # =========================================================
 st.header("3) Cálculo del Smart Score y Ranking por categoría")
 
@@ -168,25 +158,36 @@ if st.button("🧮 Calcular SmartScore y Rankear"):
     )
     st.dataframe(topk)
 
-    # Resumen por categoría
-    st.subheader("📊 Resumen estadístico por categoría")
+    st.subheader("📊 Resumen por categoría")
     stats = df_resultado.groupby("Categoría__App")["SmartScore"].agg(["mean", "std", "min", "max"]).reset_index()
     stats.columns = ["Categoría", "Promedio", "Desviación Std", "Mínimo", "Máximo"]
     st.dataframe(stats)
 
     # =====================================================
-    # 4) (OPCIONAL) GUARDADO EN GITHUB
+    # 4) GUARDADO EN GITHUB (corregido + verificación)
     # =====================================================
     st.header("4) Guardado en GitHub (opcional)")
-    st.caption("Configura en Streamlit Cloud un secret llamado `GITHUB_TOKEN` y el repo público `app_Estancia`.")
+    st.caption("Configura en Streamlit Cloud un secret llamado `GITHUB_TOKEN` con permiso `repo` y usa el repo público `app_Estancia`.")
+
+    # --- verificar conexión antes de guardar ---
+    try:
+        g = Github(st.secrets["GITHUB_TOKEN"])
+        user = g.get_user()
+        st.info(f"Conectado como: {user.login}")
+        repos = [r.name for r in user.get_repos()]
+        if "app_Estancia" in repos:
+            st.success("✅ Repositorio 'app_Estancia' encontrado.")
+        else:
+            st.warning("⚠️ No se encontró el repo 'app_Estancia'. Revisa el nombre o permisos del token.")
+    except Exception as e:
+        st.error(f"❌ Error al conectar con GitHub: {e}")
+
     usuario = st.text_input("Tu nombre o identificador (para registro):", "")
 
     if usuario and st.button("💾 Guardar resultados en GitHub"):
         try:
-            g = Github(st.secrets["GITHUB_TOKEN"])
             repo = g.get_user().get_repo("app_Estancia")
 
-            # Leer archivo existente o crear DataFrame vacío
             try:
                 contents = repo.get_contents(RESULTS_PATH_IN_REPO)
                 excel_data = base64.b64decode(contents.content)
@@ -194,12 +195,8 @@ if st.button("🧮 Calcular SmartScore y Rankear"):
             except Exception:
                 df_saved = pd.DataFrame(columns=["Usuario", "Fecha", "Pesos", "TopPorCategoria"])
 
-            # serializar pesos y top por categoría
             pesos_str = str(weights)
-            # string con "CAT: producto (score)"
-            top_lines = []
-            for _, r in topk.iterrows():
-                top_lines.append(f"{r['Categoría__App']}: {r['Producto']} ({r['SmartScore']:.3f})")
+            top_lines = [f"{r['Categoría__App']}: {r['Producto']} ({r['SmartScore']:.3f})" for _, r in topk.iterrows()]
             top_str = " | ".join(top_lines)
 
             newrow = {
@@ -223,7 +220,7 @@ if st.button("🧮 Calcular SmartScore y Rankear"):
             else:
                 repo.create_file(
                     RESULTS_PATH_IN_REPO,
-                    "Creación de Resultados_SmartScore.xlsx",
+                    "Creación inicial de Resultados_SmartScore.xlsx",
                     buf.getvalue()
                 )
             st.success("✅ Resultados guardados correctamente en GitHub.")
