@@ -198,15 +198,6 @@ _apply_reset_form_state()
 
 st.header("Cuestionario de preferencias")
 
-if st.session_state.get("success_path"):
-    st.success(
-        f"🎈 Tus respuestas fueron guardadas con éxito en '{st.session_state['success_path']}'."
-    )
-    if st.session_state.get("trigger_balloons", False):
-        st.balloons()
-    st.session_state["success_path"] = ""
-    st.session_state["trigger_balloons"] = False
-
 with st.form("cuestionario_form"):
     st.subheader("Datos de quien responde")
     nombre_completo = st.text_input("Nombre completo", key="nombre_completo")
@@ -278,6 +269,16 @@ with st.form("cuestionario_form"):
         )
 
     submitted = st.form_submit_button("Enviar respuestas")
+
+    if st.session_state.get("success_path"):
+        st.success(
+            "🎈 Tus respuestas fueron guardadas con éxito en "
+            f"'{st.session_state['success_path']}'."
+        )
+        if st.session_state.get("trigger_balloons", False):
+            st.balloons()
+        st.session_state["success_path"] = ""
+        st.session_state["trigger_balloons"] = False
 
 if submitted:
     errores = []
