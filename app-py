@@ -1,0 +1,143 @@
+import streamlit as st
+import pandas as pd
+import base64
+from github import Github
+from io import BytesIO
+from datetime import datetime
+from smartcore import calcular_smartcore  # tu módulo
+
+# ------------------------------
+# CONFIGURACIÓN DE LA APP
+# ------------------------------
+st.set_page_config(
+    page_title="Smart Core App – Estancia Profesional",
+    layout="wide",
+    page_icon="🧠"
+)
+
+st.title("🧠 Smart Core – Evaluador de Preferencias y Productos")
+
+st.markdown("""
+Esta app calcula tu **Smart Score** con base en un cuestionario de preferencias
+y muestra un ranking personalizado de productos según tus resultados.
+""")
+
+# ------------------------------
+# 1️⃣ FORMULARIO DEL CUESTIONARIO
+# ------------------------------
+st.header("1️⃣ Cuestionario de preferencias")
+
+st.info("Responde las siguientes preguntas para calcular tu Smart Score:")
+
+respuestas = {}
+preguntas = [
+    ("Salud", "¿Qué tan importante es para ti que un producto sea saludable?"),
+    ("Sabor", "¿Qué tanto priorizas el sabor sobre la salud?"),
+    ("Precio", "¿Qué tan importante es el precio al elegir un producto?"),
+    ("Etiqueta", "¿Lees las etiquetas nutricionales antes de comprar?"),
+    ("Sostenibilidad", "¿Te interesa que el empaque sea sostenible o ecológico?"),
+    ("Innovación", "¿Te atraen los productos nuevos o innovadores?"),
+    ("Marca", "¿Prefieres marcas conocidas sobre marcas nuevas?"),
+    ("Disponibilidad", "¿Tiendes a elegir lo que esté más disponible en la tienda?"),
+    ("Recomendaciones", "¿Qué tanto influye la recomendación de otros en tu decisión?"),
+    ("NutriScore", "¿Confías en sistemas de puntuación como NutriScore o SmartScore?")
+]
+
+for clave, texto in preguntas:
+    respuestas[clave] = st.slider(texto, 1, 5, 3)
+
+# ------------------------------
+# 2️⃣ CÁLCULO DEL SMART SCORE
+# ------------------------------
+if st.button("🧮 Calcular Smart Score"):
+    with st.spinner("Calculando tu Smart Score..."):
+        try:
+            smart_score = calcular_smartcore(respuestas)
+        except Exception:
+            # Si smartcore.py no tiene cálculo, usar promedio simple
+            smart_score = round(sum(respuestas.values()) / len(respuestas) * 20, 2)
+
+    st.success(f"✅ Tu Smart Score es: **{smart_score} / 100**")
+
+    # ------------------------------
+    # 3️⃣ RANKING DE PRODUCTOS
+    # ------------------------------
+    st.header("2️⃣ Ranking de Productos por Categoría")
+
+    archivos = {
+        "Ready to Eat": "data/Productos_ReadyToEat_SmartScore.xlsx",
+        "Mac & Cheese": "data/Productos_Mac_and_Cheese_SmartScore.xlsx",
+        "Instant Noodles": "data/Productos_Instant_Noodles_SmartScore.xlsx",
+    }
+
+    all_products = []
+    for cat, path in archivos.items():
+        df = pd.read_excel(path)
+        df["Categoria"] = cat
+        all_products.append(df)
+    df_all = pd.concat(all_products)
+
+    # Asegurar que haya una columna 'SmartScore' o similar
+    col_score = [c for c in df_all.columns if "Score" in c][0]
+    df_all["Diferencia"] = abs(df_all[col_score] - smart_score)
+
+    ranking = (
+        df_all.sort_values("Diferencia")
+        .groupby("Categoria")
+        .head(3)
+        .reset_index(drop=True)
+    )
+
+    st.subheader("🏆 Productos más afines a ti:")
+    st.dataframe(ranking[["Categoria", df_all.columns[0], col_score, "Diferencia"]])
+
+    # ------------------------------
+    # 4️⃣ GUARDAR RESULTADOS EN GITHUB
+    # ------------------------------
+    st.header("3️⃣ Guardado de Resultados")
+    usuario = st.text_input("Tu nombre o identificador:", "")
+    if usuario and st.button("💾 Guardar resultados"):
+        try:
+            g = Github(st.secrets["GITHUB_TOKEN"])
+            repo = g.get_user().get_repo("app_Estancia")
+            ruta_archivo = "data/Resultados_SmartScore.xlsx"
+
+            try:
+                contents = repo.get_contents(ruta_archivo)
+                excel_data = base64.b64decode(contents.content)
+                df = pd.read_excel(BytesIO(excel_data))
+            except Exception:
+                df = pd.DataFrame(columns=["Usuario", "Fecha", "SmartScore", "TopProducto"])
+
+            nuevo = pd.DataFrame([{
+                "Usuario": usuario,
+                "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "SmartScore": smart_score,
+                "TopProducto": ranking.iloc[0, 0]
+            }])
+            df = pd.concat([df, nuevo], ignore_index=True)
+
+            buffer = BytesIO()
+            df.to_excel(buffer, index=False)
+            if "contents" in locals():
+                repo.update_file(
+                    contents.path,
+                    "Actualización de resultados desde Streamlit",
+                    buffer.getvalue(),
+                    contents.sha
+                )
+            else:
+                repo.create_file(
+                    ruta_archivo,
+                    "Creación inicial de Resultados_SmartScore.xlsx",
+                    buffer.getvalue()
+                )
+            st.success("✅ Resultados guardados correctamente en GitHub.")
+        except Exception as e:
+            st.error(f"❌ No se pudo guardar en GitHub: {e}")
+
+# ------------------------------
+# PIE DE PÁGINA
+# ------------------------------
+st.markdown("---")
+st.caption("Desarrollado como parte de la Estancia Profesional – Smart Core Project © 2025")
