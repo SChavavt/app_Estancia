@@ -57,6 +57,7 @@ for key, value in INITIAL_FORM_VALUES.items():
 
 st.session_state.setdefault("success_path", "")
 st.session_state.setdefault("trigger_balloons", False)
+st.session_state.setdefault("_reset_form_requested", False)
 
 # =========================================================
 # HELPERS
@@ -109,9 +110,22 @@ def _reorder_person_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df_reordenado
 
 
-def reset_form_state() -> None:
+def _apply_reset_form_state() -> None:
+    """Aplica los valores de reinicio cuando se solicitó un reset."""
+
+    if not st.session_state.get("_reset_form_requested", False):
+        return
+
     for key, value in RESET_FORM_VALUES.items():
         st.session_state[key] = value
+
+    st.session_state["_reset_form_requested"] = False
+
+
+def reset_form_state() -> None:
+    """Marca que el formulario debe reiniciarse en el próximo ciclo."""
+
+    st.session_state["_reset_form_requested"] = True
 
 
 def _df_to_excel_bytes(df: pd.DataFrame) -> bytes:
@@ -167,6 +181,8 @@ def show_success_message(path: str) -> None:
 # =========================================================
 # 1) DATOS DE LA PERSONA + CUESTIONARIO
 # =========================================================
+_apply_reset_form_state()
+
 st.header("Cuestionario de preferencias")
 
 if st.session_state.get("success_path"):
