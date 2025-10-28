@@ -141,54 +141,6 @@ with st.form("cuestionario_form"):
 
     submitted = st.form_submit_button("Enviar respuestas")
 
-# =========================================================
-# 2) CARGA Y NORMALIZACIÓN DE ATRIBUTOS
-# =========================================================
-st.header("2) Carga y normalización de atributos")
-
-try:
-    df_all = _read_all_products(DATA_FILES)
-except Exception as e:
-    st.error(f"No pude leer los Excel en /data: {e}")
-    st.stop()
-
-df_base = df_all.copy()
-
-try:
-    df_base["Sodio_norm"] = 1 - normalize_minmax(df_base["Sodio_mg"])
-    df_base["Grasa_norm"] = 1 - normalize_minmax(df_base["Grasa Saturada_g"])
-    df_base["Precio_norm"] = 1 - normalize_minmax(df_base["Precio_USD"])
-    minutos = df_base["Tiempo_Preparación"].apply(_extract_minutes)
-    df_base["Conveniencia_norm"] = 1 - normalize_minmax(minutos)
-    df_base["Dieta_norm"] = normalize_minmax(df_base["Proteína_g"])
-    df_base["Porción_norm"] = normalize_minmax(df_base["Calorías"])
-    df_base["Natural_norm"] = df_base["Naturales"].apply(_to_bool_natural).astype(float)
-except KeyError as e:
-    st.error(f"Falta una columna esperada en tus Excel: {e}")
-    st.stop()
-
-with st.expander("Ver muestra de atributos normalizados"):
-    st.dataframe(
-        df_base[
-            [
-                "Producto",
-                "Categoría",
-                "Sodio_norm",
-                "Grasa_norm",
-                "Precio_norm",
-                "Conveniencia_norm",
-                "Dieta_norm",
-                "Porción_norm",
-                "Natural_norm",
-            ]
-        ].head(10)
-    )
-
-# =========================================================
-# 3) SMART SCORE Y RANKING
-# =========================================================
-st.header("3) Resultados del Smart Score")
-
 if submitted:
     errores = []
     if not nombre_completo.strip():
@@ -200,6 +152,27 @@ if submitted:
         for err in errores:
             st.error(err)
     else:
+        try:
+            df_all = _read_all_products(DATA_FILES)
+        except Exception as e:
+            st.error(f"No pude leer los Excel en /data: {e}")
+            st.stop()
+
+        df_base = df_all.copy()
+
+        try:
+            df_base["Sodio_norm"] = 1 - normalize_minmax(df_base["Sodio_mg"])
+            df_base["Grasa_norm"] = 1 - normalize_minmax(df_base["Grasa Saturada_g"])
+            df_base["Precio_norm"] = 1 - normalize_minmax(df_base["Precio_USD"])
+            minutos = df_base["Tiempo_Preparación"].apply(_extract_minutes)
+            df_base["Conveniencia_norm"] = 1 - normalize_minmax(minutos)
+            df_base["Dieta_norm"] = normalize_minmax(df_base["Proteína_g"])
+            df_base["Porción_norm"] = normalize_minmax(df_base["Calorías"])
+            df_base["Natural_norm"] = df_base["Naturales"].apply(_to_bool_natural).astype(float)
+        except KeyError as e:
+            st.error(f"Falta una columna esperada en tus Excel: {e}")
+            st.stop()
+
         weights = {
             "portion": w_portion / 5.0,
             "diet": w_diet / 7.0,
@@ -241,20 +214,12 @@ if submitted:
         )
         stats.columns = ["Categoría", "Promedio", "Desviación Std", "Mínimo", "Máximo"]
 
-        st.session_state["df_resultado"] = df_resultado
-        st.session_state["topk"] = topk
-        st.session_state["stats"] = stats
-        st.session_state["weights_snapshot"] = weights.copy()
-        st.session_state["persona_nombre"] = nombre_completo.strip()
-        st.session_state["persona_edad"] = int(edad)
-        st.session_state["persona_genero"] = genero
-
-        st.session_state["save_feedback"] = []
+        persona_nombre = nombre_completo.strip()
+        persona_edad = int(edad)
+        persona_genero = genero
 
         if "GITHUB_TOKEN" not in st.secrets:
-            st.session_state["save_feedback"].append(
-                ("warning", "⚠️ Configura el secret `GITHUB_TOKEN` para guardar automáticamente en GitHub.")
-            )
+            st.warning("⚠️ Configura el secret `GITHUB_TOKEN` para guardar automáticamente en GitHub.")
         else:
             try:
                 github_client = Github(st.secrets["GITHUB_TOKEN"])
@@ -267,16 +232,12 @@ if submitted:
                     if isinstance(datos_repo, dict)
                     else str(gh_error)
                 )
-                st.session_state["save_feedback"].append(
-                    ("error", f"❌ No se pudo acceder al repositorio 'app_Estancia': {mensaje_repo}")
-                )
+                st.error(f"❌ No se pudo acceder al repositorio 'app_Estancia': {mensaje_repo}")
             except Exception as generic_error:
-                st.session_state["save_feedback"].append(
-                    ("error", f"❌ Error al conectar con GitHub: {generic_error}")
-                )
+                st.error(f"❌ Error al conectar con GitHub: {generic_error}")
             else:
                 ruta_archivo = RESULTS_PATH_IN_REPO
-                pesos_actuales = st.session_state.get("weights_snapshot", weights.copy())
+                pesos_actuales = weights.copy()
                 topk_df = topk.sort_values(["Categoría__App", "SmartScore"], ascending=[True, False])
 
                 top_columns = {}
@@ -292,9 +253,9 @@ if submitted:
                 nuevo_registro = pd.DataFrame(
                     [
                         {
-                            "Nombre Completo": st.session_state["persona_nombre"],
-                            "Edad": st.session_state["persona_edad"],
-                            "Género": st.session_state["persona_genero"],
+                            "Nombre Completo": persona_nombre,
+                            "Edad": persona_edad,
+                            "Género": persona_genero,
                             "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                             "Pesos": json.dumps(pesos_actuales, ensure_ascii=False, indent=2),
                             **top_columns,
@@ -314,18 +275,15 @@ if submitted:
                             buffer.seek(0)
                             repo.create_file(
                                 path=ruta_archivo,
-                                message=(
-                                    f"Creación inicial de {ruta_archivo} ({st.session_state['persona_nombre']})"
-                                ),
+                                message=(f"Creación inicial de {ruta_archivo} ({persona_nombre})"),
                                 content=buffer.getvalue(),
                             )
-                            st.session_state["save_feedback"].append(
-                                ("success", f"✅ Archivo '{ruta_archivo}' creado y resultados guardados correctamente.")
+                            st.success(
+                                f"🎈🎈 Tus respuestas fueron guardadas con éxito en '{ruta_archivo}'."
                             )
+                            st.balloons()
                         except Exception as create_error:
-                            st.session_state["save_feedback"].append(
-                                ("error", f"❌ Error al crear '{ruta_archivo}': {create_error}")
-                            )
+                            st.error(f"❌ Error al crear '{ruta_archivo}': {create_error}")
                     else:
                         datos_archivo = getattr(gh_error, "data", {})
                         mensaje_archivo = (
@@ -333,13 +291,9 @@ if submitted:
                             if isinstance(datos_archivo, dict)
                             else str(gh_error)
                         )
-                        st.session_state["save_feedback"].append(
-                            ("error", f"❌ No se pudo leer '{ruta_archivo}': {mensaje_archivo}")
-                        )
+                        st.error(f"❌ No se pudo leer '{ruta_archivo}': {mensaje_archivo}")
                 except Exception as read_error:
-                    st.session_state["save_feedback"].append(
-                        ("error", f"❌ Error al leer '{ruta_archivo}': {read_error}")
-                    )
+                    st.error(f"❌ Error al leer '{ruta_archivo}': {read_error}")
                 else:
                     try:
                         excel_data = base64.b64decode(contents.content)
@@ -353,53 +307,17 @@ if submitted:
                         repo.update_file(
                             path=ruta_archivo,
                             message=(
-                                f"Actualización SmartScore desde Streamlit ({st.session_state['persona_nombre']})"
+                                f"Actualización SmartScore desde Streamlit ({persona_nombre})"
                             ),
                             content=buffer.getvalue(),
                             sha=contents.sha,
                         )
-                        st.session_state["save_feedback"].append(
-                            ("success", f"✅ Archivo '{ruta_archivo}' actualizado con tus resultados.")
+                        st.success(
+                            f"🎈🎈 Tus respuestas fueron guardadas con éxito en '{ruta_archivo}'."
                         )
+                        st.balloons()
                     except Exception as update_error:
-                        st.session_state["save_feedback"].append(
-                            ("error", f"❌ Error al actualizar '{ruta_archivo}': {update_error}")
-                        )
-
-if "weights_snapshot" in st.session_state:
-    with st.expander("Ver pesos normalizados"):
-        st.json(st.session_state["weights_snapshot"])
-
-if "df_resultado" in st.session_state:
-    st.success("✅ SmartScore personalizado calculado para cada producto.")
-    st.dataframe(st.session_state["df_resultado"].head(20))
-
-if "topk" in st.session_state:
-    st.subheader("🏆 Top por categoría (3 mejores)")
-    st.dataframe(st.session_state["topk"])
-
-if "stats" in st.session_state:
-    st.subheader("📊 Resumen por categoría")
-    st.dataframe(st.session_state["stats"])
-
-# =========================================================
-# 4) ESTADO DEL GUARDADO EN GITHUB
-# =========================================================
-st.header("4) Guardado en GitHub")
-st.caption(
-    "El guardado sucede automáticamente al enviar tus respuestas si existe el secret `GITHUB_TOKEN`."
-)
-
-if "save_feedback" in st.session_state:
-    for level, message in st.session_state["save_feedback"]:
-        if level == "success":
-            st.success(message)
-        elif level == "warning":
-            st.warning(message)
-        else:
-            st.error(message)
-elif "weights_snapshot" in st.session_state:
-    st.info("Envía el formulario para guardar tus resultados en GitHub.")
+                        st.error(f"❌ Error al actualizar '{ruta_archivo}': {update_error}")
 
 # =========================================================
 # FOOTER
