@@ -66,6 +66,17 @@ def normalize_minmax(series: pd.Series) -> pd.Series:
     return (series - smin) / denom
 
 
+def _reorder_person_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Coloca Nombre/Edad/Género al inicio y elimina 'Usuario' si aparece."""
+    columnas_inicio = ["Nombre Completo", "Edad", "Género"]
+    presentes = [col for col in columnas_inicio if col in df.columns]
+    restantes = [col for col in df.columns if col not in presentes and col != "Usuario"]
+    df_reordenado = df[presentes + restantes]
+    if "Usuario" in df_reordenado.columns:
+        df_reordenado = df_reordenado.drop(columns=["Usuario"])
+    return df_reordenado
+
+
 # =========================================================
 # 1) DATOS DE LA PERSONA + CUESTIONARIO
 # =========================================================
@@ -245,7 +256,6 @@ if submitted:
                 nuevo_registro = pd.DataFrame(
                     [
                         {
-                            "Usuario": st.session_state["persona_nombre"],
                             "Nombre Completo": st.session_state["persona_nombre"],
                             "Edad": st.session_state["persona_edad"],
                             "Género": st.session_state["persona_genero"],
@@ -255,6 +265,8 @@ if submitted:
                         }
                     ]
                 )
+
+                nuevo_registro = _reorder_person_columns(nuevo_registro)
 
                 try:
                     contents = repo.get_contents(ruta_archivo)
@@ -296,7 +308,9 @@ if submitted:
                     try:
                         excel_data = base64.b64decode(contents.content)
                         df_existente = pd.read_excel(BytesIO(excel_data))
+                        df_existente = _reorder_person_columns(df_existente)
                         df_nuevo = pd.concat([df_existente, nuevo_registro], ignore_index=True)
+                        df_nuevo = _reorder_person_columns(df_nuevo)
                         buffer = BytesIO()
                         df_nuevo.to_excel(buffer, index=False)
                         buffer.seek(0)
