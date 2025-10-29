@@ -1,9 +1,11 @@
 # app.py
 import re
 import json
+import random
 import base64
 from io import BytesIO
 from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -155,6 +157,18 @@ for key, value in INITIAL_FORM_VALUES.items():
 st.session_state.setdefault("success_path", "")
 st.session_state.setdefault("trigger_balloons", False)
 st.session_state.setdefault("_reset_form_requested", False)
+st.session_state.setdefault("visual_log", [])
+
+VISUAL_MODE_OPTIONS = ["A/B", "Grid", "Sequential"]
+VISUAL_SUBFOLDERS = {"A/B": "A_B", "Grid": "Grid", "Sequential": "Sequential"}
+VALID_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
+VISUAL_BASE_PATH = Path("data/images")
+
+if "visual_mode" not in st.session_state:
+    st.session_state["visual_mode"] = random.choice(VISUAL_MODE_OPTIONS)
+
+st.session_state.setdefault("visual_images", [])
+st.session_state.setdefault("visual_index", 0)
 
 # =========================================================
 # HELPERS
@@ -225,6 +239,48 @@ def reset_form_state() -> None:
     st.session_state["_reset_form_requested"] = True
 
 
+def _load_image_paths(folder: Path) -> list:
+    if not folder.exists():
+        return []
+    return [
+        path
+        for path in folder.iterdir()
+        if path.is_file() and path.suffix.lower() in VALID_IMAGE_EXTENSIONS
+    ]
+
+
+def _initialize_visual_session() -> None:
+    mode = st.session_state.get("visual_mode", random.choice(VISUAL_MODE_OPTIONS))
+    folder_name = VISUAL_SUBFOLDERS.get(mode)
+    if folder_name is None:
+        st.session_state["visual_mode"] = random.choice(VISUAL_MODE_OPTIONS)
+        folder_name = VISUAL_SUBFOLDERS[st.session_state["visual_mode"]]
+        mode = st.session_state["visual_mode"]
+    folder = VISUAL_BASE_PATH / folder_name
+    image_paths = _load_image_paths(folder)
+    random.shuffle(image_paths)
+    if mode == "A/B":
+        selected = image_paths[:2]
+    elif mode == "Grid":
+        selected = image_paths[:4]
+    else:
+        selected = image_paths
+    st.session_state["visual_images"] = selected
+    st.session_state["visual_index"] = 0
+
+
+def _register_visual_choice(choice_label: str) -> None:
+    entry = {
+        "timestamp": datetime.now().isoformat(),
+        "participant_name": st.session_state.get("nombre_completo", "").strip(),
+        "mode": st.session_state.get("visual_mode", ""),
+        "choice": choice_label,
+        "smart_score_condition": "OFF",
+    }
+    st.session_state["visual_log"].append(entry)
+    st.success("✅ Choice registered!")
+
+
 def _df_to_excel_bytes(df: pd.DataFrame) -> bytes:
     buffer = BytesIO()
     df.to_excel(buffer, index=False)
@@ -289,239 +345,333 @@ def show_success_message(path: str) -> None:
 
 
 # =========================================================
-# 1) DATOS DE LA PERSONA + CUESTIONARIO
+# INTERFACES
 # =========================================================
-_apply_reset_form_state()
+tab1, tab2 = st.tabs(
+    ["📝 SmartScore Questionnaire", "👁️ Experimento Visual (Sin Smart Score)"]
+)
 
-st.header(t("questionnaire_header"))
+with tab1:
+    _apply_reset_form_state()
 
-with st.form("cuestionario_form"):
-    st.subheader(t("respondent_data_subheader"))
-    nombre_completo = st.text_input(t("name_label"), key="nombre_completo")
-    col_info_1, col_info_2 = st.columns(2)
-    with col_info_1:
-        edad = st.number_input(
-            t("age_label"), min_value=1, max_value=120, step=1, key="edad"
-        )
-    with col_info_2:
-        genero = st.selectbox(
-            t("gender_label"),
-            GENDER_KEYS,
-            format_func=lambda key: GENDER_LABELS[st.session_state["language"]][key],
-            key="genero",
-        )
+    st.header(t("questionnaire_header"))
 
-    st.subheader(t("aspects_subheader"))
-    st.caption(t("aspects_caption"))
-    col1, col2 = st.columns(2)
-    with col1:
-        w_portion = st.slider(
-            t("slider_portion"),
-            0,
-            5,
-            value=st.session_state["w_portion"],
-            key="w_portion",
-        )
-        w_diet = st.slider(
-            t("slider_diet"),
-            0,
-            7,
-            value=st.session_state["w_diet"],
-            key="w_diet",
-        )
-        w_salt = st.slider(
-            t("slider_salt"),
-            0,
-            5,
-            value=st.session_state["w_salt"],
-            key="w_salt",
-        )
-        w_fat = st.slider(
-            t("slider_fat"),
-            0,
-            5,
-            value=st.session_state["w_fat"],
-            key="w_fat",
-        )
-    with col2:
-        w_natural = st.slider(
-            t("slider_natural"),
-            0,
-            5,
-            value=st.session_state["w_natural"],
-            key="w_natural",
-        )
-        w_convenience = st.slider(
-            t("slider_convenience"),
-            0,
-            5,
-            value=st.session_state["w_convenience"],
-            key="w_convenience",
-        )
-        w_price = st.slider(
-            t("slider_price"),
-            0,
-            5,
-            value=st.session_state["w_price"],
-            key="w_price",
-        )
+    with st.form("cuestionario_form"):
+        st.subheader(t("respondent_data_subheader"))
+        nombre_completo = st.text_input(t("name_label"), key="nombre_completo")
+        col_info_1, col_info_2 = st.columns(2)
+        with col_info_1:
+            edad = st.number_input(
+                t("age_label"), min_value=1, max_value=120, step=1, key="edad"
+            )
+        with col_info_2:
+            genero = st.selectbox(
+                t("gender_label"),
+                GENDER_KEYS,
+                format_func=lambda key: GENDER_LABELS[st.session_state["language"]][key],
+                key="genero",
+            )
 
-    submitted = st.form_submit_button(t("submit_button"))
+        st.subheader(t("aspects_subheader"))
+        st.caption(t("aspects_caption"))
+        col1, col2 = st.columns(2)
+        with col1:
+            w_portion = st.slider(
+                t("slider_portion"),
+                0,
+                5,
+                value=st.session_state["w_portion"],
+                key="w_portion",
+            )
+            w_diet = st.slider(
+                t("slider_diet"),
+                0,
+                7,
+                value=st.session_state["w_diet"],
+                key="w_diet",
+            )
+            w_salt = st.slider(
+                t("slider_salt"),
+                0,
+                5,
+                value=st.session_state["w_salt"],
+                key="w_salt",
+            )
+            w_fat = st.slider(
+                t("slider_fat"),
+                0,
+                5,
+                value=st.session_state["w_fat"],
+                key="w_fat",
+            )
+        with col2:
+            w_natural = st.slider(
+                t("slider_natural"),
+                0,
+                5,
+                value=st.session_state["w_natural"],
+                key="w_natural",
+            )
+            w_convenience = st.slider(
+                t("slider_convenience"),
+                0,
+                5,
+                value=st.session_state["w_convenience"],
+                key="w_convenience",
+            )
+            w_price = st.slider(
+                t("slider_price"),
+                0,
+                5,
+                value=st.session_state["w_price"],
+                key="w_price",
+            )
 
-    if st.session_state.get("success_path"):
-        st.success(
-            t("success_saved", path=st.session_state["success_path"])
-        )
-        if st.session_state.get("trigger_balloons", False):
-            st.balloons()
-        st.session_state["success_path"] = ""
-        st.session_state["trigger_balloons"] = False
+        submitted = st.form_submit_button(t("submit_button"))
 
-if submitted:
-    errores = []
-    if not nombre_completo.strip():
-        errores.append(t("error_name_required"))
-    if edad <= 0:
-        errores.append(t("error_age_positive"))
+        if st.session_state.get("success_path"):
+            st.success(
+                t("success_saved", path=st.session_state["success_path"])
+            )
+            if st.session_state.get("trigger_balloons", False):
+                st.balloons()
+            st.session_state["success_path"] = ""
+            st.session_state["trigger_balloons"] = False
 
-    if errores:
-        for err in errores:
-            st.error(err)
-    else:
-        try:
-            df_all = _read_all_products(DATA_FILES)
-        except Exception as e:
-            st.error(t("error_read_excel", error=e))
-            st.stop()
+    if submitted:
+        errores = []
+        if not nombre_completo.strip():
+            errores.append(t("error_name_required"))
+        if edad <= 0:
+            errores.append(t("error_age_positive"))
 
-        df_base = df_all.copy()
-
-        try:
-            df_base["Sodio_norm"] = 1 - normalize_minmax(df_base["Sodio_mg"])
-            df_base["Grasa_norm"] = 1 - normalize_minmax(df_base["Grasa Saturada_g"])
-            df_base["Precio_norm"] = 1 - normalize_minmax(df_base["Precio_USD"])
-            minutos = df_base["Tiempo_Preparación"].apply(_extract_minutes)
-            df_base["Conveniencia_norm"] = 1 - normalize_minmax(minutos)
-            df_base["Dieta_norm"] = normalize_minmax(df_base["Proteína_g"])
-            df_base["Porción_norm"] = normalize_minmax(df_base["Calorías"])
-            df_base["Natural_norm"] = df_base["Naturales"].apply(_to_bool_natural).astype(float)
-        except KeyError as e:
-            st.error(t("error_missing_column", column=e))
-            st.stop()
-
-        weights = {
-            "portion": w_portion / 5.0,
-            "diet": w_diet / 7.0,
-            "salt": w_salt / 5.0,
-            "fat": w_fat / 5.0,
-            "natural": w_natural / 5.0,
-            "convenience": w_convenience / 5.0,
-            "price": w_price / 5.0,
-        }
-
-        df_calc = df_base.copy()
-        sum_w = sum(weights.values()) if sum(weights.values()) != 0 else 1.0
-        df_calc["SmartScore"] = (
-            weights["salt"] * df_calc["Sodio_norm"]
-            + weights["fat"] * df_calc["Grasa_norm"]
-            + weights["natural"] * df_calc["Natural_norm"]
-            + weights["convenience"] * df_calc["Conveniencia_norm"]
-            + weights["price"] * df_calc["Precio_norm"]
-            + weights["portion"] * df_calc["Porción_norm"]
-            + weights["diet"] * df_calc["Dieta_norm"]
-        ) / sum_w
-
-        df_resultado = df_calc[
-            ["Producto", "Categoría", "Categoría__App", "SmartScore", "Comentarios Clave"]
-        ].copy()
-        df_resultado = df_resultado.sort_values("SmartScore", ascending=False).reset_index(drop=True)
-
-        topk = (
-            df_resultado.sort_values("SmartScore", ascending=False)
-            .groupby("Categoría__App")
-            .head(3)
-            .reset_index(drop=True)
-        )
-
-        stats = (
-            df_resultado.groupby("Categoría__App")["SmartScore"]
-            .agg(["mean", "std", "min", "max"])
-            .reset_index()
-        )
-        stats.columns = ["Categoría", "Promedio", "Desviación Std", "Mínimo", "Máximo"]
-
-        persona_nombre = nombre_completo.strip()
-        persona_edad = int(edad)
-        persona_genero = GENDER_LABELS[st.session_state["language"]][genero]
-
-        if "GITHUB_TOKEN" not in st.secrets:
-            st.warning(t("warning_github_token"))
+        if errores:
+            for err in errores:
+                st.error(err)
         else:
             try:
-                github_client = Github(st.secrets["GITHUB_TOKEN"])
-                github_user = github_client.get_user()
-                repo = github_user.get_repo("app_Estancia")
-            except GithubException as gh_error:
-                datos_repo = getattr(gh_error, "data", {})
-                mensaje_repo = (
-                    datos_repo.get("message", str(gh_error))
-                    if isinstance(datos_repo, dict)
-                    else str(gh_error)
-                )
-                st.error(t("error_repo_access", error=mensaje_repo))
-            except Exception as generic_error:
-                st.error(t("error_github_connection", error=generic_error))
+                df_all = _read_all_products(DATA_FILES)
+            except Exception as e:
+                st.error(t("error_read_excel", error=e))
+                st.stop()
+
+            df_base = df_all.copy()
+
+            try:
+                df_base["Sodio_norm"] = 1 - normalize_minmax(df_base["Sodio_mg"])
+                df_base["Grasa_norm"] = 1 - normalize_minmax(df_base["Grasa Saturada_g"])
+                df_base["Precio_norm"] = 1 - normalize_minmax(df_base["Precio_USD"])
+                minutos = df_base["Tiempo_Preparación"].apply(_extract_minutes)
+                df_base["Conveniencia_norm"] = 1 - normalize_minmax(minutos)
+                df_base["Dieta_norm"] = normalize_minmax(df_base["Proteína_g"])
+                df_base["Porción_norm"] = normalize_minmax(df_base["Calorías"])
+                df_base["Natural_norm"] = df_base["Naturales"].apply(_to_bool_natural).astype(float)
+            except KeyError as e:
+                st.error(t("error_missing_column", column=e))
+                st.stop()
+
+            weights = {
+                "portion": w_portion / 5.0,
+                "diet": w_diet / 7.0,
+                "salt": w_salt / 5.0,
+                "fat": w_fat / 5.0,
+                "natural": w_natural / 5.0,
+                "convenience": w_convenience / 5.0,
+                "price": w_price / 5.0,
+            }
+
+            df_calc = df_base.copy()
+            sum_w = sum(weights.values()) if sum(weights.values()) != 0 else 1.0
+            df_calc["SmartScore"] = (
+                weights["salt"] * df_calc["Sodio_norm"]
+                + weights["fat"] * df_calc["Grasa_norm"]
+                + weights["natural"] * df_calc["Natural_norm"]
+                + weights["convenience"] * df_calc["Conveniencia_norm"]
+                + weights["price"] * df_calc["Precio_norm"]
+                + weights["portion"] * df_calc["Porción_norm"]
+                + weights["diet"] * df_calc["Dieta_norm"]
+            ) / sum_w
+
+            df_resultado = df_calc[
+                ["Producto", "Categoría", "Categoría__App", "SmartScore", "Comentarios Clave"]
+            ].copy()
+            df_resultado = df_resultado.sort_values("SmartScore", ascending=False).reset_index(drop=True)
+
+            topk = (
+                df_resultado.sort_values("SmartScore", ascending=False)
+                .groupby("Categoría__App")
+                .head(3)
+                .reset_index(drop=True)
+            )
+
+            stats = (
+                df_resultado.groupby("Categoría__App")["SmartScore"]
+                .agg(["mean", "std", "min", "max"])
+                .reset_index()
+            )
+            stats.columns = ["Categoría", "Promedio", "Desviación Std", "Mínimo", "Máximo"]
+
+            persona_nombre = nombre_completo.strip()
+            persona_edad = int(edad)
+            persona_genero = GENDER_LABELS[st.session_state["language"]][genero]
+
+            if "GITHUB_TOKEN" not in st.secrets:
+                st.warning(t("warning_github_token"))
             else:
-                ruta_archivo = RESULTS_PATH_IN_REPO
-                pesos_actuales = weights.copy()
-                topk_df = topk.sort_values(["Categoría__App", "SmartScore"], ascending=[True, False])
-
-                top_columns = {}
-                for categoria, group in topk_df.groupby("Categoría__App"):
-                    for rank, (_, fila) in enumerate(group.iterrows(), start=1):
-                        base_col = f"{categoria} · Top {rank}"
-                        top_columns[f"{base_col} · Producto"] = fila["Producto"]
-                        top_columns[f"{base_col} · SmartScore"] = f"{fila['SmartScore']:.3f}"
-                        comentario = fila.get("Comentarios Clave", "")
-                        if isinstance(comentario, str) and comentario.strip():
-                            top_columns[f"{base_col} · Comentarios"] = comentario.strip()
-
-                nuevo_registro = pd.DataFrame(
-                    [
-                        {
-                            "Nombre Completo": persona_nombre,
-                            "Edad": persona_edad,
-                            "Género": persona_genero,
-                            "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "Pesos": json.dumps(pesos_actuales, ensure_ascii=False, indent=2),
-                            **top_columns,
-                        }
-                    ]
-                )
-
-                nuevo_registro = _reorder_person_columns(nuevo_registro)
-
                 try:
-                    append_record_to_results(
-                        repo=repo,
-                        ruta_archivo=ruta_archivo,
-                        nuevo_registro=nuevo_registro,
-                        persona_nombre=persona_nombre,
-                    )
+                    github_client = Github(st.secrets["GITHUB_TOKEN"])
+                    github_user = github_client.get_user()
+                    repo = github_user.get_repo("app_Estancia")
                 except GithubException as gh_error:
-                    datos_archivo = getattr(gh_error, "data", {})
-                    mensaje_archivo = (
-                        datos_archivo.get("message", str(gh_error))
-                        if isinstance(datos_archivo, dict)
+                    datos_repo = getattr(gh_error, "data", {})
+                    mensaje_repo = (
+                        datos_repo.get("message", str(gh_error))
+                        if isinstance(datos_repo, dict)
                         else str(gh_error)
                     )
-                    st.error(t("error_sync_repo", path=ruta_archivo, error=mensaje_archivo))
-                except Exception as update_error:
-                    st.error(t("error_update_file", path=ruta_archivo, error=update_error))
+                    st.error(t("error_repo_access", error=mensaje_repo))
+                except Exception as generic_error:
+                    st.error(t("error_github_connection", error=generic_error))
                 else:
-                    show_success_message(ruta_archivo)
+                    ruta_archivo = RESULTS_PATH_IN_REPO
+                    pesos_actuales = weights.copy()
+                    topk_df = topk.sort_values(["Categoría__App", "SmartScore"], ascending=[True, False])
 
-# =========================================================
-# FOOTER
-# =========================================================
-st.markdown("---")
+                    top_columns = {}
+                    for categoria, group in topk_df.groupby("Categoría__App"):
+                        for rank, (_, fila) in enumerate(group.iterrows(), start=1):
+                            base_col = f"{categoria} · Top {rank}"
+                            top_columns[f"{base_col} · Producto"] = fila["Producto"]
+                            top_columns[f"{base_col} · SmartScore"] = f"{fila['SmartScore']:.3f}"
+                            comentario = fila.get("Comentarios Clave", "")
+                            if isinstance(comentario, str) and comentario.strip():
+                                top_columns[f"{base_col} · Comentarios"] = comentario.strip()
+
+                    nuevo_registro = pd.DataFrame(
+                        [
+                            {
+                                "Nombre Completo": persona_nombre,
+                                "Edad": persona_edad,
+                                "Género": persona_genero,
+                                "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                "Pesos": json.dumps(pesos_actuales, ensure_ascii=False, indent=2),
+                                **top_columns,
+                            }
+                        ]
+                    )
+
+                    nuevo_registro = _reorder_person_columns(nuevo_registro)
+
+                    try:
+                        append_record_to_results(
+                            repo=repo,
+                            ruta_archivo=ruta_archivo,
+                            nuevo_registro=nuevo_registro,
+                            persona_nombre=persona_nombre,
+                        )
+                    except GithubException as gh_error:
+                        datos_archivo = getattr(gh_error, "data", {})
+                        mensaje_archivo = (
+                            datos_archivo.get("message", str(gh_error))
+                            if isinstance(datos_archivo, dict)
+                            else str(gh_error)
+                        )
+                        st.error(t("error_sync_repo", path=ruta_archivo, error=mensaje_archivo))
+                    except Exception as update_error:
+                        st.error(t("error_update_file", path=ruta_archivo, error=update_error))
+                    else:
+                        show_success_message(ruta_archivo)
+
+    st.markdown("---")
+
+with tab2:
+    st.header("👁️ Visual Experiment – Product Viewing Task (No Smart Score)")
+    st.caption(
+        "Explora diferentes presentaciones visuales y selecciona el producto que prefieras en cada modalidad."
+    )
+
+    if st.session_state.get("visual_mode") not in VISUAL_MODE_OPTIONS:
+        st.session_state["visual_mode"] = random.choice(VISUAL_MODE_OPTIONS)
+        st.session_state["visual_images"] = []
+
+    if not st.session_state.get("visual_images"):
+        _initialize_visual_session()
+
+    mode = st.session_state.get("visual_mode")
+    images = st.session_state.get("visual_images", [])
+
+    st.info(f"Modo de visualización activo: {mode}")
+
+    if not images:
+        st.warning(
+            "No se encontraron imágenes para esta modalidad. Verifica la carpeta 'data/images/'."
+        )
+    else:
+        if mode == "A/B":
+            columns = st.columns(2)
+            for idx, (col, image_path) in enumerate(zip(columns, images)):
+                with col:
+                    st.image(str(image_path), use_column_width=True)
+                    st.caption(image_path.stem.replace("_", " "))
+                    if st.button("Elegir este producto", key=f"choose_ab_{idx}"):
+                        _register_visual_choice(image_path.stem)
+        elif mode == "Grid":
+            for start in range(0, len(images), 2):
+                columns = st.columns(2)
+                for offset, (col, image_path) in enumerate(
+                    zip(columns, images[start : start + 2])
+                ):
+                    with col:
+                        st.image(str(image_path), use_column_width=True)
+                        st.caption(image_path.stem.replace("_", " "))
+                        if st.button(
+                            "Elegir este producto",
+                            key=f"choose_grid_{start + offset}",
+                        ):
+                            _register_visual_choice(image_path.stem)
+        else:
+            index = st.session_state.get("visual_index", 0)
+            if index >= len(images):
+                index = len(images) - 1
+                st.session_state["visual_index"] = max(index, 0)
+
+            if images:
+                current_image = images[index]
+                st.image(str(current_image), use_column_width=True)
+                st.caption(current_image.stem.replace("_", " "))
+                if st.button("Elegir este producto", key=f"choose_seq_{index}"):
+                    _register_visual_choice(current_image.stem)
+
+                next_disabled = index >= len(images) - 1
+                if st.button(
+                    "Next Product ▶️",
+                    key="next_product",
+                    disabled=next_disabled,
+                ):
+                    if index < len(images) - 1:
+                        st.session_state["visual_index"] = index + 1
+
+                if next_disabled:
+                    st.info("Has llegado al último producto de esta secuencia.")
+
+    st.markdown("---")
+    st.subheader("📥 Descarga tus elecciones")
+
+    if st.session_state["visual_log"]:
+        log_df = pd.DataFrame(st.session_state["visual_log"])
+        csv_data = log_df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "Descargar registros",
+            data=csv_data,
+            file_name="visual_experiment_log.csv",
+            mime="text/csv",
+        )
+    else:
+        st.info("No hay elecciones registradas todavía.")
+        st.download_button(
+            "Descargar registros",
+            data="".encode("utf-8"),
+            file_name="visual_experiment_log.csv",
+            mime="text/csv",
+            disabled=True,
+        )
