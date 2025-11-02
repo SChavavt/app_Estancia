@@ -982,34 +982,44 @@ with tab2:
 
             current_image = images[index]
             _render_visual_image(current_image, current_mode)
-            if current_state.get("selected") == current_image.stem:
-                st.caption("✅ Seleccionado")
-            st.markdown(
-                f"<div style='text-align:center;font-weight:bold;margin-top:0.5rem;'>Producto {index + 1} de {total_images}</div>",
-                unsafe_allow_html=True,
-            )
 
-            action_cols = st.columns([1, 1, 1])
+            button_spacers = st.columns([1, 1.2, 1.2, 1.2, 1])
 
-            with action_cols[0]:
+            with button_spacers[1]:
                 prev_clicked = st.button(
                     "◀️ Producto anterior",
                     key=f"prev_{current_mode}",
                     disabled=index <= 0,
+                    use_container_width=True,
                 )
 
-            with action_cols[1]:
+            with button_spacers[2]:
                 choose_clicked = st.button(
                     "Elegir este producto",
                     key=f"choose_{current_mode}_{index}",
+                    use_container_width=True,
                 )
 
-            with action_cols[2]:
+            with button_spacers[3]:
                 next_clicked = st.button(
                     "Siguiente producto ▶️",
                     key=f"next_{current_mode}",
                     disabled=index >= total_images - 1,
+                    use_container_width=True,
                 )
+
+            if current_state.get("selected") == current_image.stem:
+                st.markdown(
+                    "<p style='text-align:center;margin:0.3rem 0;'>✅ Seleccionado</p>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown("<div style='margin:0.3rem 0;'></div>", unsafe_allow_html=True)
+
+            st.markdown(
+                f"<div style='text-align:center;font-weight:bold;margin:0.25rem 0;'>Producto {index + 1} de {total_images}</div>",
+                unsafe_allow_html=True,
+            )
 
             if prev_clicked:
                 current_state["navigation_index"] = max(0, index - 1)
