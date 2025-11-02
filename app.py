@@ -257,6 +257,32 @@ TAB2_IMAGE_STYLES = """
     height: min(70vh, 700px);
 }
 
+.tab2-image-container.seq + div[data-testid="stHorizontalBlock"] {
+    justify-content: center;
+    margin-top: 0.5rem;
+    gap: 0.75rem;
+}
+
+.tab2-image-container.seq + div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+    flex: 0 0 190px;
+}
+
+.tab2-image-container.seq + div[data-testid="stHorizontalBlock"] button {
+    width: 100%;
+}
+
+.seq-selection-label {
+    text-align: center;
+    margin: 0.35rem 0 0;
+    font-size: 0.9rem;
+}
+
+.seq-product-position {
+    text-align: center;
+    font-weight: 600;
+    margin: 0.2rem 0 0.4rem;
+}
+
 @media (max-width: 1200px) {
     .tab2-image-container.ab img,
     .tab2-image-container.grid img {
@@ -1033,34 +1059,46 @@ with tab2:
 
             current_image = images[index]
             _render_visual_image(current_image, current_mode)
-            if current_state.get("selected") == current_image.stem:
-                st.caption(t("tab2_selected_label"))
-            st.markdown(
-                f"<div style='text-align:center;font-weight:bold;margin-top:0.5rem;'>{html.escape(t('tab2_product_position', current=index + 1, total=total_images))}</div>",
-                unsafe_allow_html=True,
-            )
 
-            action_cols = st.columns([1, 1, 1])
+            prev_clicked = False
+            choose_clicked = False
+            next_clicked = False
 
-            with action_cols[0]:
+            button_columns = st.columns([1, 1, 1], gap="small")
+
+            with button_columns[0]:
                 prev_clicked = st.button(
                     t("tab2_prev_product"),
                     key=f"prev_{current_mode}",
                     disabled=index <= 0,
+                    use_container_width=True,
                 )
 
-            with action_cols[1]:
+            with button_columns[1]:
                 choose_clicked = st.button(
                     t("tab2_choose_product"),
                     key=f"choose_{current_mode}_{index}",
+                    use_container_width=True,
                 )
 
-            with action_cols[2]:
+            with button_columns[2]:
                 next_clicked = st.button(
                     t("tab2_next_product"),
                     key=f"next_{current_mode}",
                     disabled=index >= total_images - 1,
+                    use_container_width=True,
                 )
+
+            if current_state.get("selected") == current_image.stem:
+                st.markdown(
+                    f"<p class='seq-selection-label'>{html.escape(t('tab2_selected_label'))}</p>",
+                    unsafe_allow_html=True,
+                )
+
+            st.markdown(
+                f"<p class='seq-product-position'>{html.escape(t('tab2_product_position', current=index + 1, total=total_images))}</p>",
+                unsafe_allow_html=True,
+            )
 
             if prev_clicked:
                 current_state["navigation_index"] = max(0, index - 1)
