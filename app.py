@@ -49,6 +49,36 @@ LANGUAGE_CONTENT = {
         "error_sync_repo": "❌ Error syncing '{path}' with GitHub: {error}",
         "error_update_file": "❌ Error updating '{path}': {error}",
         "page_header": "🧠 Smart Core – Questionnaire",
+        "tab2_header": "👁️ Visual Experiment – Product Viewing Task (No Smart Score)",
+        "tab2_caption": "Explore different visual presentations and choose the product you prefer in each mode.",
+        "tab2_warning_name_invalid": "The name you used to access is no longer available. Please choose another name to continue.",
+        "tab2_info_no_records": "To access this section, first save at least one response from the SmartScore tab.",
+        "tab2_select_name_label": "Select your registered full name",
+        "tab2_login_submit": "Sign in",
+        "tab2_info_select_name": "Select a name to view the visual experiment.",
+        "tab2_access_success": "Signed in as: {name}",
+        "tab2_change_user_button": "Switch user",
+        "tab2_warning_no_modes": "There are no modes configured for the visual experiment. Contact the administrator.",
+        "tab2_experiment_completed_path": "✅ Experiment completed. Results saved to: {path}",
+        "tab2_experiment_completed": "✅ Experiment completed.",
+        "tab2_download_results_button": "Download results as Excel",
+        "tab2_default_download_name": "visual_experiment_results.xlsx",
+        "tab2_download_no_data": "No data available to download.",
+        "tab2_restart_experiment": "Restart experiment",
+        "tab2_mode_progress": "Viewing mode {index} of {total}: {mode}",
+        "tab2_warning_no_images": "No images found for this mode. Check the 'data/images/' folder.",
+        "tab2_warning_need_images": "At least 2 images are required for the {mode} mode.",
+        "tab2_selected_badge": "✅ Selected",
+        "tab2_choose_product_button": "Choose this product",
+        "tab2_prev_product_button": "◀️ Previous product",
+        "tab2_product_counter": "Product {index} of {total}",
+        "tab2_next_product_button": "Next product ▶️",
+        "tab2_info_select_product": "Select a product to enable the next step.",
+        "tab2_next_mode_button": "Next mode ▶️",
+        "tab2_finish_button": "Finish experiment",
+        "tab2_error_file_missing": "The file '{path}' does not exist yet.",
+        "tab2_error_read_file": "The file '{path}' could not be read: {error}",
+        "tab2_error_missing_column": "The file does not contain the column 'Nombre Completo'.",
     },
     "Español": {
         "page_title": "🧠 Smart Core – Cuestionario",
@@ -80,6 +110,36 @@ LANGUAGE_CONTENT = {
         "error_sync_repo": "❌ Error al sincronizar '{path}' con GitHub: {error}",
         "error_update_file": "❌ Error al actualizar '{path}': {error}",
         "page_header": "🧠 Smart Core – Cuestionario",
+        "tab2_header": "👁️ Experimento visual – Tarea de visualización de productos (Sin Smart Score)",
+        "tab2_caption": "Explora diferentes presentaciones visuales y selecciona el producto que prefieras en cada modalidad.",
+        "tab2_warning_name_invalid": "El nombre con el que accediste ya no está disponible. Selecciona otro nombre para continuar.",
+        "tab2_info_no_records": "Para acceder a esta sección primero guarda al menos una respuesta desde la pestaña de SmartScore.",
+        "tab2_select_name_label": "Selecciona tu nombre completo registrado",
+        "tab2_login_submit": "Ingresar",
+        "tab2_info_select_name": "Selecciona un nombre para ver el experimento visual.",
+        "tab2_access_success": "Accediendo como: {name}",
+        "tab2_change_user_button": "Cambiar de usuario",
+        "tab2_warning_no_modes": "No hay modalidades configuradas para el experimento visual. Contacta al administrador.",
+        "tab2_experiment_completed_path": "✅ Experimento finalizado. Resultados guardados en: {path}",
+        "tab2_experiment_completed": "✅ Experimento finalizado.",
+        "tab2_download_results_button": "Descargar resultados en Excel",
+        "tab2_default_download_name": "resultados_experimento_visual.xlsx",
+        "tab2_download_no_data": "No se encontraron datos para descargar.",
+        "tab2_restart_experiment": "Reiniciar experimento",
+        "tab2_mode_progress": "Modo de visualización {index} de {total}: {mode}",
+        "tab2_warning_no_images": "No se encontraron imágenes para esta modalidad. Verifica la carpeta 'data/images/'.",
+        "tab2_warning_need_images": "Se necesitan al menos 2 imágenes para el modo {mode}.",
+        "tab2_selected_badge": "✅ Seleccionado",
+        "tab2_choose_product_button": "Elegir este producto",
+        "tab2_prev_product_button": "◀️ Producto anterior",
+        "tab2_product_counter": "Producto {index} de {total}",
+        "tab2_next_product_button": "Siguiente producto ▶️",
+        "tab2_info_select_product": "Selecciona un producto para habilitar el siguiente paso.",
+        "tab2_next_mode_button": "Siguiente modo ▶️",
+        "tab2_finish_button": "Finalizar experimento",
+        "tab2_error_file_missing": "El archivo '{path}' no existe aún.",
+        "tab2_error_read_file": "No se pudo leer el archivo '{path}': {error}",
+        "tab2_error_missing_column": "El archivo no contiene la columna 'Nombre Completo'.",
     },
 }
 
@@ -548,17 +608,17 @@ def show_success_message(path: str) -> None:
     _trigger_streamlit_rerun()
 
 
-def _load_registered_names(path: Path) -> tuple[list[str], Optional[str]]:
+def _load_registered_names(path: Path) -> tuple[list[str], Optional[dict[str, str]]]:
     if not path.exists():
-        return [], f"El archivo '{path}' no existe aún."
+        return [], {"key": "tab2_error_file_missing", "path": str(path)}
 
     try:
         df = pd.read_excel(path)
     except Exception as error:
-        return [], f"No se pudo leer el archivo '{path}': {error}"
+        return [], {"key": "tab2_error_read_file", "path": str(path), "error": str(error)}
 
     if "Nombre Completo" not in df.columns:
-        return [], "El archivo no contiene la columna 'Nombre Completo'."
+        return [], {"key": "tab2_error_missing_column"}
 
     nombres_crudos = df["Nombre Completo"].dropna().astype(str).str.strip()
     nombres_unicos = []
@@ -817,39 +877,38 @@ with tab1:
     st.markdown("---")
 
 with tab2:
-    st.header("👁️ Visual Experiment – Product Viewing Task (No Smart Score)")
-    st.caption(
-        "Explora diferentes presentaciones visuales y selecciona el producto que prefieras en cada modalidad."
-    )
+    st.header(t("tab2_header"))
+    st.caption(t("tab2_caption"))
 
     registered_names, names_error = _load_registered_names(Path(RESULTS_PATH_IN_REPO))
 
     if names_error:
-        st.warning(names_error)
+        if isinstance(names_error, dict):
+            key = names_error.get("key")
+            params = {k: v for k, v in names_error.items() if k != "key"}
+            st.warning(t(key, **params) if key else str(names_error))
+        else:
+            st.warning(names_error)
 
     if (
         st.session_state.get("tab2_authenticated", False)
         and st.session_state.get("tab2_user_name") not in registered_names
     ):
-        st.warning(
-            "El nombre con el que accediste ya no está disponible. Selecciona otro nombre para continuar."
-        )
+        st.warning(t("tab2_warning_name_invalid"))
         st.session_state["tab2_authenticated"] = False
         st.session_state["tab2_user_name"] = ""
 
     if not registered_names:
-        st.info(
-            "Para acceder a esta sección primero guarda al menos una respuesta desde la pestaña de SmartScore."
-        )
+        st.info(t("tab2_info_no_records"))
         st.stop()
 
     if not st.session_state.get("tab2_authenticated", False):
         with st.form("tab2_login_form"):
             selected_name = st.selectbox(
-                "Selecciona tu nombre completo registrado",
+                t("tab2_select_name_label"),
                 registered_names,
             )
-            login_submitted = st.form_submit_button("Ingresar")
+            login_submitted = st.form_submit_button(t("tab2_login_submit"))
 
         if login_submitted:
             st.session_state["tab2_authenticated"] = True
@@ -857,13 +916,13 @@ with tab2:
             _reset_visual_experiment_state()
 
     if not st.session_state.get("tab2_authenticated", False):
-        st.info("Selecciona un nombre para ver el experimento visual.")
+        st.info(t("tab2_info_select_name"))
         st.stop()
 
     usuario_activo = st.session_state.get("tab2_user_name", "")
-    st.success(f"Accediendo como: {usuario_activo}")
+    st.success(t("tab2_access_success", name=usuario_activo))
 
-    if st.button("Cambiar de usuario", key="tab2_logout"):
+    if st.button(t("tab2_change_user_button"), key="tab2_logout"):
         st.session_state["tab2_authenticated"] = False
         st.session_state["tab2_user_name"] = ""
         _reset_visual_experiment_state()
@@ -871,9 +930,7 @@ with tab2:
 
     sequence = st.session_state.get("mode_sequence", [])
     if not sequence:
-        st.warning(
-            "No hay modalidades configuradas para el experimento visual. Contacta al administrador."
-        )
+        st.warning(t("tab2_warning_no_modes"))
         st.stop()
 
     for mode_option in sequence:
@@ -883,27 +940,25 @@ with tab2:
         result_path = st.session_state.get("experiment_result_path", "")
         result_df = st.session_state.get("experiment_result_df")
         if result_path:
-            st.success(f"✅ Experimento finalizado. Resultados guardados en: {result_path}")
+            st.success(t("tab2_experiment_completed_path", path=result_path))
         else:
-            st.success("✅ Experimento finalizado.")
+            st.success(t("tab2_experiment_completed"))
 
         if isinstance(result_df, pd.DataFrame) and not result_df.empty:
             st.dataframe(result_df)
             download_name = (
-                Path(result_path).name
-                if result_path
-                else "resultados_experimento_visual.xlsx"
+                Path(result_path).name if result_path else t("tab2_default_download_name")
             )
             st.download_button(
-                "Descargar resultados en Excel",
+                t("tab2_download_results_button"),
                 data=_df_to_excel_bytes(result_df),
                 file_name=download_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
         else:
-            st.info("No se encontraron datos para descargar.")
+            st.info(t("tab2_download_no_data"))
 
-        if st.button("Reiniciar experimento", key="restart_experiment"):
+        if st.button(t("tab2_restart_experiment"), key="restart_experiment"):
             _reset_visual_experiment_state()
             _trigger_streamlit_rerun()
 
@@ -919,29 +974,34 @@ with tab2:
     mode_sessions = st.session_state.get("mode_sessions", {})
     current_state = mode_sessions.get(current_mode, {})
 
-    st.info(f"Modo de visualización {current_index + 1} de {total_modes}: {current_mode}")
+    st.info(
+        t(
+            "tab2_mode_progress",
+            index=current_index + 1,
+            total=total_modes,
+            mode=current_mode,
+        )
+    )
 
     st.markdown(TAB2_IMAGE_STYLES, unsafe_allow_html=True)
 
     images = current_state.get("images", [])
 
     if not images:
-        st.warning(
-            "No se encontraron imágenes para esta modalidad. Verifica la carpeta 'data/images/'."
-        )
+        st.warning(t("tab2_warning_no_images", mode=current_mode))
     else:
         if current_mode == "A/B":
             if len(images) < 2:
-                st.warning("Se necesitan al menos 2 imágenes para el modo A/B.")
+                st.warning(t("tab2_warning_need_images", mode=current_mode))
             else:
                 columns = st.columns(len(images))
                 for idx, (col, image_path) in enumerate(zip(columns, images)):
                     with col:
                         _render_visual_image(image_path, current_mode)
                         if current_state.get("selected") == image_path.stem:
-                            st.caption("✅ Seleccionado")
+                            st.caption(t("tab2_selected_badge"))
                         if st.button(
-                            "Elegir este producto",
+                            t("tab2_choose_product_button"),
                             key=f"choose_{current_mode}_{idx}",
                         ):
                             _handle_mode_selection(
@@ -951,7 +1011,7 @@ with tab2:
                             _trigger_streamlit_rerun()
         elif current_mode == "Grid":
             if len(images) < 2:
-                st.warning("Se necesitan al menos 2 imágenes para el modo Grid.")
+                st.warning(t("tab2_warning_need_images", mode=current_mode))
             else:
                 for start in range(0, len(images), 2):
                     columns = st.columns(2)
@@ -961,9 +1021,9 @@ with tab2:
                         with col:
                             _render_visual_image(image_path, current_mode)
                             if current_state.get("selected") == image_path.stem:
-                                st.caption("✅ Seleccionado")
+                                st.caption(t("tab2_selected_badge"))
                             if st.button(
-                                "Elegir este producto",
+                                t("tab2_choose_product_button"),
                                 key=f"choose_{current_mode}_{start + offset}",
                             ):
                                 _handle_mode_selection(
@@ -983,7 +1043,7 @@ with tab2:
             nav_cols = st.columns([1, 2, 1])
             with nav_cols[0]:
                 if st.button(
-                    "◀️ Producto anterior",
+                    t("tab2_prev_product_button"),
                     key=f"prev_{current_mode}",
                     disabled=index <= 0,
                 ):
@@ -993,13 +1053,13 @@ with tab2:
                     _trigger_streamlit_rerun()
 
             nav_cols[1].markdown(
-                f"<div style='text-align:center;font-weight:bold;'>Producto {index + 1} de {total_images}</div>",
+                f"<div style='text-align:center;font-weight:bold;'>{t('tab2_product_counter', index=index + 1, total=total_images)}</div>",
                 unsafe_allow_html=True,
             )
 
             with nav_cols[2]:
                 if st.button(
-                    "Siguiente producto ▶️",
+                    t("tab2_next_product_button"),
                     key=f"next_{current_mode}",
                     disabled=index >= total_images - 1,
                 ):
@@ -1011,9 +1071,9 @@ with tab2:
             current_image = images[index]
             _render_visual_image(current_image, current_mode)
             if current_state.get("selected") == current_image.stem:
-                st.caption("✅ Seleccionado")
+                st.caption(t("tab2_selected_badge"))
             if st.button(
-                "Elegir este producto",
+                t("tab2_choose_product_button"),
                 key=f"choose_{current_mode}_{index}",
             ):
                 _handle_mode_selection(current_mode, current_image.stem, usuario_activo)
@@ -1029,18 +1089,18 @@ with tab2:
     is_last_mode = current_index == total_modes - 1
 
     if not selection_made:
-        st.info("Selecciona un producto para habilitar el siguiente paso.")
+        st.info(t("tab2_info_select_product"))
 
     if not is_last_mode:
         if st.button(
-            "Siguiente modo ▶️",
+            t("tab2_next_mode_button"),
             key=f"next_mode_{current_mode}",
             disabled=not selection_made,
         ):
             _advance_visual_mode()
     else:
         if st.button(
-            "Finalizar experimento",
+            t("tab2_finish_button"),
             key="finish_experiment",
             disabled=not selection_made,
         ):
