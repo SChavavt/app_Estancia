@@ -3,6 +3,7 @@ import re
 import json
 import random
 import base64
+import html
 from io import BytesIO
 from datetime import datetime
 from pathlib import Path
@@ -167,6 +168,53 @@ VISUAL_SUBFOLDERS = {"A/B": "A_B", "Grid": "Grid", "Sequential": "Sequential"}
 VALID_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
 VISUAL_BASE_PATH = Path("data/images")
 
+TAB2_IMAGE_STYLES = """
+<style>
+.tab2-image-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+}
+
+.tab2-image-container img {
+    width: 100%;
+    object-fit: contain;
+    border-radius: 8px;
+    background-color: #ffffff;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.tab2-image-caption {
+    font-size: 0.85rem;
+    text-align: center;
+    margin: 0;
+    color: inherit;
+}
+
+.tab2-image-container.ab img,
+.tab2-image-container.grid img {
+    height: min(28vh, 320px);
+}
+
+.tab2-image-container.seq img {
+    height: min(70vh, 700px);
+}
+
+@media (max-width: 1200px) {
+    .tab2-image-container.ab img,
+    .tab2-image-container.grid img {
+        height: min(26vh, 260px);
+    }
+
+    .tab2-image-container.seq img {
+        height: min(60vh, 600px);
+    }
+}
+</style>
+"""
+
 if "visual_mode" not in st.session_state:
     st.session_state["visual_mode"] = random.choice(VISUAL_MODE_OPTIONS)
 
@@ -296,6 +344,25 @@ def _register_visual_choice(choice_label: str) -> None:
     }
     st.session_state["visual_log"].append(entry)
     st.success("✅ Choice registered!")
+
+
+def _render_visual_image(image_path: Path, mode: str) -> None:
+    mode_class = {"A/B": "ab", "Grid": "grid", "Sequential": "seq"}.get(mode, "grid")
+    image_bytes = image_path.read_bytes()
+    encoded = base64.b64encode(image_bytes).decode("utf-8")
+    extension = image_path.suffix.lower().lstrip(".") or "png"
+    if extension == "jpg":
+        extension = "jpeg"
+    caption = html.escape(image_path.stem.replace("_", " "))
+    st.markdown(
+        f"""
+        <div class="tab2-image-container {mode_class}">
+            <img src="data:image/{extension};base64,{encoded}" alt="{caption}" />
+            <p class="tab2-image-caption">{caption}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _df_to_excel_bytes(df: pd.DataFrame) -> bytes:
@@ -690,12 +757,12 @@ with tab2:
             "No se encontraron imágenes para esta modalidad. Verifica la carpeta 'data/images/'."
         )
     else:
+        st.markdown(TAB2_IMAGE_STYLES, unsafe_allow_html=True)
         if mode == "A/B":
             columns = st.columns(2)
             for idx, (col, image_path) in enumerate(zip(columns, images)):
                 with col:
-                    st.image(str(image_path), use_column_width=True)
-                    st.caption(image_path.stem.replace("_", " "))
+                    _render_visual_image(image_path, mode)
                     if st.button("Elegir este producto", key=f"choose_ab_{idx}"):
                         _register_visual_choice(image_path.stem)
         elif mode == "Grid":
@@ -705,8 +772,7 @@ with tab2:
                     zip(columns, images[start : start + 2])
                 ):
                     with col:
-                        st.image(str(image_path), use_column_width=True)
-                        st.caption(image_path.stem.replace("_", " "))
+                        _render_visual_image(image_path, mode)
                         if st.button(
                             "Elegir este producto",
                             key=f"choose_grid_{start + offset}",
@@ -720,8 +786,7 @@ with tab2:
 
             if images:
                 current_image = images[index]
-                st.image(str(current_image), use_column_width=True)
-                st.caption(current_image.stem.replace("_", " "))
+                _render_visual_image(current_image, mode)
                 if st.button("Elegir este producto", key=f"choose_seq_{index}"):
                     _register_visual_choice(current_image.stem)
 
