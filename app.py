@@ -919,22 +919,6 @@ with tab2:
     mode_sessions = st.session_state.get("mode_sessions", {})
     current_state = mode_sessions.get(current_mode, {})
 
-    st.markdown("#### Progreso del experimento")
-    progress_records = []
-    for idx, mode_name in enumerate(sequence, start=1):
-        state = mode_sessions.get(mode_name, {})
-        status = state.get("selected") or "Pendiente"
-        progress_records.append(
-            {"Paso": f"{idx}/{total_modes}", "Modo": mode_name, "Estado": status}
-        )
-    progress_df = pd.DataFrame(progress_records)
-    st.table(progress_df)
-
-    feedback = st.session_state.get("last_selection_feedback", "")
-    if feedback:
-        st.success(f"Has seleccionado: {feedback}")
-        st.session_state["last_selection_feedback"] = ""
-
     st.info(f"Modo de visualización {current_index + 1} de {total_modes}: {current_mode}")
 
     st.markdown(TAB2_IMAGE_STYLES, unsafe_allow_html=True)
