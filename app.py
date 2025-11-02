@@ -980,42 +980,44 @@ with tab2:
                 mode_sessions[current_mode] = current_state
                 st.session_state["mode_sessions"] = mode_sessions
 
-            nav_cols = st.columns([1, 2, 1])
-            with nav_cols[0]:
-                if st.button(
-                    "◀️ Producto anterior",
-                    key=f"prev_{current_mode}",
-                    disabled=index <= 0,
-                ):
-                    current_state["navigation_index"] = max(0, index - 1)
-                    mode_sessions[current_mode] = current_state
-                    st.session_state["mode_sessions"] = mode_sessions
-                    _trigger_streamlit_rerun()
-
-            nav_cols[1].markdown(
-                f"<div style='text-align:center;font-weight:bold;'>Producto {index + 1} de {total_images}</div>",
-                unsafe_allow_html=True,
-            )
-
-            with nav_cols[2]:
-                if st.button(
-                    "Siguiente producto ▶️",
-                    key=f"next_{current_mode}",
-                    disabled=index >= total_images - 1,
-                ):
-                    current_state["navigation_index"] = min(total_images - 1, index + 1)
-                    mode_sessions[current_mode] = current_state
-                    st.session_state["mode_sessions"] = mode_sessions
-                    _trigger_streamlit_rerun()
-
             current_image = images[index]
             _render_visual_image(current_image, current_mode)
             if current_state.get("selected") == current_image.stem:
                 st.caption("✅ Seleccionado")
-            if st.button(
-                "Elegir este producto",
-                key=f"choose_{current_mode}_{index}",
-            ):
+            st.markdown(
+                f"<div style='text-align:center;font-weight:bold;margin-top:0.5rem;'>Producto {index + 1} de {total_images}</div>",
+                unsafe_allow_html=True,
+            )
+
+            action_cols = st.columns([1, 1, 1])
+
+            with action_cols[0]:
+                prev_clicked = st.button(
+                    "◀️ Producto anterior",
+                    key=f"prev_{current_mode}",
+                    disabled=index <= 0,
+                )
+
+            with action_cols[1]:
+                choose_clicked = st.button(
+                    "Elegir este producto",
+                    key=f"choose_{current_mode}_{index}",
+                )
+
+            with action_cols[2]:
+                next_clicked = st.button(
+                    "Siguiente producto ▶️",
+                    key=f"next_{current_mode}",
+                    disabled=index >= total_images - 1,
+                )
+
+            if prev_clicked:
+                current_state["navigation_index"] = max(0, index - 1)
+                mode_sessions[current_mode] = current_state
+                st.session_state["mode_sessions"] = mode_sessions
+                _trigger_streamlit_rerun()
+
+            if choose_clicked:
                 _handle_mode_selection(current_mode, current_image.stem, usuario_activo)
                 mode_sessions = st.session_state.get("mode_sessions", {})
                 current_state = mode_sessions.get(current_mode, current_state)
@@ -1023,6 +1025,12 @@ with tab2:
                 mode_sessions[current_mode] = current_state
                 st.session_state["mode_sessions"] = mode_sessions
                 st.session_state["last_selection_feedback"] = current_image.stem
+                _trigger_streamlit_rerun()
+
+            if next_clicked:
+                current_state["navigation_index"] = min(total_images - 1, index + 1)
+                mode_sessions[current_mode] = current_state
+                st.session_state["mode_sessions"] = mode_sessions
                 _trigger_streamlit_rerun()
 
     selection_made = bool(current_state.get("selected"))
