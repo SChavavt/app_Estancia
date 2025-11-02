@@ -6,6 +6,7 @@ import base64
 from io import BytesIO
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 import streamlit as st
@@ -158,6 +159,8 @@ st.session_state.setdefault("success_path", "")
 st.session_state.setdefault("trigger_balloons", False)
 st.session_state.setdefault("_reset_form_requested", False)
 st.session_state.setdefault("visual_log", [])
+st.session_state.setdefault("tab2_authenticated", False)
+st.session_state.setdefault("tab2_user_name", "")
 
 VISUAL_MODE_OPTIONS = ["A/B", "Grid", "Sequential"]
 VISUAL_SUBFOLDERS = {"A/B": "A_B", "Grid": "Grid", "Sequential": "Sequential"}
@@ -237,6 +240,20 @@ def reset_form_state() -> None:
     """Marca que el formulario debe reiniciarse en el próximo ciclo."""
 
     st.session_state["_reset_form_requested"] = True
+
+
+def _trigger_streamlit_rerun() -> None:
+    rerun = getattr(st, "rerun", None)
+    if callable(rerun):
+        rerun()
+        return
+
+    experimental_rerun = getattr(st, "experimental_rerun", None)
+    if callable(experimental_rerun):
+        experimental_rerun()
+        return
+
+    raise AttributeError("Streamlit no dispone de 'st.rerun' ni 'st.experimental_rerun'.")
 
 
 def _load_image_paths(folder: Path) -> list:
@@ -328,20 +345,35 @@ def show_success_message(path: str) -> None:
     st.session_state["success_path"] = path
     st.session_state["trigger_balloons"] = True
     reset_form_state()
-    # Streamlit 1.27+ reemplaza ``st.experimental_rerun`` por ``st.rerun``.
-    # Para mantener compatibilidad con versiones anteriores, intentamos usar la
-    # nueva API y, si no está disponible, recurrimos al nombre experimental.
-    rerun = getattr(st, "rerun", None)
-    if callable(rerun):
-        rerun()
-        return
+    _trigger_streamlit_rerun()
 
-    experimental_rerun = getattr(st, "experimental_rerun", None)
-    if callable(experimental_rerun):
-        experimental_rerun()
-        return
 
-    raise AttributeError("Streamlit no dispone de 'st.rerun' ni 'st.experimental_rerun'.")
+def _load_registered_names(path: Path) -> tuple[list[str], Optional[str]]:
+    if not path.exists():
+        return [], f"El archivo '{path}' no existe aún."
+
+    try:
+        df = pd.read_excel(path)
+    except Exception as error:
+        return [], f"No se pudo leer el archivo '{path}': {error}"
+
+    if "Nombre Completo" not in df.columns:
+        return [], "El archivo no contiene la columna 'Nombre Completo'."
+
+    nombres_crudos = df["Nombre Completo"].dropna().astype(str).str.strip()
+    nombres_unicos = []
+    nombres_vistos = set()
+
+    for nombre in nombres_crudos:
+        if not nombre:
+            continue
+        clave = nombre.casefold()
+        if clave in nombres_vistos:
+            continue
+        nombres_vistos.add(clave)
+        nombres_unicos.append(nombre)
+
+    return nombres_unicos, None
 
 
 # =========================================================
@@ -589,6 +621,57 @@ with tab2:
     st.caption(
         "Explora diferentes presentaciones visuales y selecciona el producto que prefieras en cada modalidad."
     )
+
+    registered_names, names_error = _load_registered_names(Path(RESULTS_PATH_IN_REPO))
+
+    if names_error:
+        st.warning(names_error)
+
+    if (
+        st.session_state.get("tab2_authenticated", False)
+        and st.session_state.get("tab2_user_name") not in registered_names
+    ):
+        st.warning(
+            "El nombre con el que accediste ya no está disponible. Selecciona otro nombre para continuar."
+        )
+        st.session_state["tab2_authenticated"] = False
+        st.session_state["tab2_user_name"] = ""
+
+    if not registered_names:
+        st.info(
+            "Para acceder a esta sección primero guarda al menos una respuesta desde la pestaña de SmartScore."
+        )
+        st.stop()
+
+    if not st.session_state.get("tab2_authenticated", False):
+        with st.form("tab2_login_form"):
+            selected_name = st.selectbox(
+                "Selecciona tu nombre completo registrado",
+                registered_names,
+            )
+            login_submitted = st.form_submit_button("Ingresar")
+
+        if login_submitted:
+            st.session_state["tab2_authenticated"] = True
+            st.session_state["tab2_user_name"] = selected_name
+            st.session_state["visual_log"] = []
+            st.session_state["visual_images"] = []
+            st.session_state["visual_index"] = 0
+
+    if not st.session_state.get("tab2_authenticated", False):
+        st.info("Selecciona un nombre para ver el experimento visual.")
+        st.stop()
+
+    usuario_activo = st.session_state.get("tab2_user_name", "")
+    st.success(f"Accediendo como: {usuario_activo}")
+
+    if st.button("Cambiar de usuario", key="tab2_logout"):
+        st.session_state["tab2_authenticated"] = False
+        st.session_state["tab2_user_name"] = ""
+        st.session_state["visual_log"] = []
+        st.session_state["visual_images"] = []
+        st.session_state["visual_index"] = 0
+        _trigger_streamlit_rerun()
 
     if st.session_state.get("visual_mode") not in VISUAL_MODE_OPTIONS:
         st.session_state["visual_mode"] = random.choice(VISUAL_MODE_OPTIONS)
