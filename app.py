@@ -167,6 +167,7 @@ VISUAL_MODE_OPTIONS = ["A/B", "Grid", "Sequential"]
 VISUAL_SUBFOLDERS = {"A/B": "A_B", "Grid": "Grid", "Sequential": "Sequential"}
 VALID_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
 VISUAL_BASE_PATH = Path("data/images")
+VISUAL_RESULTS_DIR = Path("data/experimentos")
 
 TAB2_IMAGE_STYLES = """
 <style>
@@ -215,11 +216,13 @@ TAB2_IMAGE_STYLES = """
 </style>
 """
 
-if "visual_mode" not in st.session_state:
-    st.session_state["visual_mode"] = random.choice(VISUAL_MODE_OPTIONS)
-
-st.session_state.setdefault("visual_images", [])
-st.session_state.setdefault("visual_index", 0)
+st.session_state.setdefault("mode_sequence", VISUAL_MODE_OPTIONS.copy())
+st.session_state.setdefault("current_mode_index", 0)
+st.session_state.setdefault("mode_sessions", {})
+st.session_state.setdefault("experiment_completed", False)
+st.session_state.setdefault("experiment_result_path", "")
+st.session_state.setdefault("experiment_result_df", pd.DataFrame())
+st.session_state.setdefault("last_selection_feedback", "")
 
 # =========================================================
 # HELPERS
@@ -314,36 +317,166 @@ def _load_image_paths(folder: Path) -> list:
     ]
 
 
-def _initialize_visual_session() -> None:
-    mode = st.session_state.get("visual_mode", random.choice(VISUAL_MODE_OPTIONS))
+def _load_mode_images(mode: str) -> list[Path]:
     folder_name = VISUAL_SUBFOLDERS.get(mode)
     if folder_name is None:
-        st.session_state["visual_mode"] = random.choice(VISUAL_MODE_OPTIONS)
-        folder_name = VISUAL_SUBFOLDERS[st.session_state["visual_mode"]]
-        mode = st.session_state["visual_mode"]
+        return []
     folder = VISUAL_BASE_PATH / folder_name
     image_paths = _load_image_paths(folder)
     random.shuffle(image_paths)
     if mode == "A/B":
-        selected = image_paths[:2]
-    elif mode == "Grid":
-        selected = image_paths[:4]
-    else:
-        selected = image_paths
-    st.session_state["visual_images"] = selected
-    st.session_state["visual_index"] = 0
+        return image_paths[:2]
+    if mode == "Grid":
+        return image_paths[:4]
+    if mode == "Sequential":
+        return image_paths[:4] if len(image_paths) > 4 else image_paths
+    return image_paths
 
 
-def _register_visual_choice(choice_label: str) -> None:
-    entry = {
-        "timestamp": datetime.now().isoformat(),
-        "participant_name": st.session_state.get("nombre_completo", "").strip(),
-        "mode": st.session_state.get("visual_mode", ""),
-        "choice": choice_label,
-        "smart_score_condition": "OFF",
+def _sanitize_filename_component(value: str) -> str:
+    sanitized = re.sub(r"[^A-Za-z0-9_-]", "_", value.strip())
+    sanitized = re.sub(r"_+", "_", sanitized)
+    return sanitized.strip("_") or "usuario"
+
+
+def _reset_visual_experiment_state() -> None:
+    st.session_state["mode_sequence"] = VISUAL_MODE_OPTIONS.copy()
+    st.session_state["current_mode_index"] = 0
+    st.session_state["mode_sessions"] = {}
+    st.session_state["visual_log"] = []
+    st.session_state["experiment_completed"] = False
+    st.session_state["experiment_result_path"] = ""
+    st.session_state["experiment_result_df"] = pd.DataFrame()
+    st.session_state["last_selection_feedback"] = ""
+
+
+def _ensure_mode_initialized(mode: str) -> None:
+    sessions: dict = st.session_state.setdefault("mode_sessions", {})
+    if mode in sessions:
+        if sessions[mode].get("images"):
+            return
+    images = _load_mode_images(mode)
+    sessions[mode] = {
+        "images": images,
+        "options": [img.stem for img in images],
+        "selected": None,
+        "start_time": None,
+        "selection_timestamp": None,
+        "selection_duration": None,
+        "completion_timestamp": None,
+        "navigation_index": 0,
     }
-    st.session_state["visual_log"].append(entry)
-    st.success("✅ Choice registered!")
+    st.session_state["mode_sessions"] = sessions
+
+
+def _ensure_mode_started(mode: str) -> None:
+    sessions: dict = st.session_state.get("mode_sessions", {})
+    mode_state = sessions.get(mode)
+    if not mode_state:
+        return
+    if mode_state.get("start_time") is None:
+        mode_state["start_time"] = datetime.now()
+        sessions[mode] = mode_state
+        st.session_state["mode_sessions"] = sessions
+
+
+def _handle_mode_selection(mode: str, choice_label: str, participant: str) -> None:
+    sessions: dict = st.session_state.get("mode_sessions", {})
+    mode_state = sessions.get(mode)
+    if not mode_state:
+        return
+    now = datetime.now()
+    if mode_state.get("start_time") is None:
+        mode_state["start_time"] = now
+    mode_state["selected"] = choice_label
+    mode_state["selection_timestamp"] = now
+    start_time = mode_state.get("start_time")
+    if start_time:
+        mode_state["selection_duration"] = (now - start_time).total_seconds()
+    sessions[mode] = mode_state
+    st.session_state["mode_sessions"] = sessions
+
+    log_entry = {
+        "timestamp": now.isoformat(),
+        "participant_name": participant,
+        "mode": mode,
+        "choice": choice_label,
+        "options": mode_state.get("options", []),
+        "selection_duration_seconds": mode_state.get("selection_duration"),
+    }
+
+    filtered_log = [entry for entry in st.session_state.get("visual_log", []) if entry.get("mode") != mode]
+    filtered_log.append(log_entry)
+    st.session_state["visual_log"] = filtered_log
+
+
+def _advance_visual_mode() -> None:
+    sequence: list = st.session_state.get("mode_sequence", [])
+    index: int = st.session_state.get("current_mode_index", 0)
+    if not sequence:
+        return
+    current_mode = sequence[index]
+    sessions: dict = st.session_state.get("mode_sessions", {})
+    mode_state = sessions.get(current_mode, {})
+    mode_state.setdefault("completion_timestamp", datetime.now())
+    sessions[current_mode] = mode_state
+    st.session_state["mode_sessions"] = sessions
+    if index < len(sequence) - 1:
+        st.session_state["current_mode_index"] = index + 1
+    _trigger_streamlit_rerun()
+
+
+def _build_experiment_dataframe(user_name: str) -> pd.DataFrame:
+    sequence: list = st.session_state.get("mode_sequence", [])
+    sessions: dict = st.session_state.get("mode_sessions", {})
+    records: list[dict] = []
+    for mode in sequence:
+        state = sessions.get(mode, {})
+        start_time = state.get("start_time")
+        selection_time = state.get("selection_timestamp")
+        completion_time = state.get("completion_timestamp") or selection_time
+        selection_duration = state.get("selection_duration")
+        mode_duration = None
+        if start_time and completion_time:
+            mode_duration = (completion_time - start_time).total_seconds()
+        records.append(
+            {
+                "Usuario": user_name,
+                "Modo": mode,
+                "Opciones Presentadas": ", ".join(state.get("options", [])),
+                "Producto Seleccionado": state.get("selected") or "",
+                "Tiempo hasta selección (s)": selection_duration,
+                "Duración del modo (s)": mode_duration,
+                "Inicio del modo": start_time.isoformat() if start_time else "",
+                "Momento de selección": selection_time.isoformat() if selection_time else "",
+                "Momento de finalización": completion_time.isoformat() if completion_time else "",
+            }
+        )
+    return pd.DataFrame(records)
+
+
+def _complete_visual_experiment(user_name: str) -> None:
+    sessions: dict = st.session_state.get("mode_sessions", {})
+    current_mode = st.session_state.get("mode_sequence", [None])[st.session_state.get("current_mode_index", 0)]
+    if current_mode in sessions:
+        mode_state = sessions[current_mode]
+        if mode_state.get("completion_timestamp") is None:
+            mode_state["completion_timestamp"] = datetime.now()
+            sessions[current_mode] = mode_state
+            st.session_state["mode_sessions"] = sessions
+
+    df = _build_experiment_dataframe(user_name)
+    VISUAL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_name = _sanitize_filename_component(user_name)
+    file_path = VISUAL_RESULTS_DIR / f"experimento_{safe_name}_{timestamp}.xlsx"
+    df.to_excel(file_path, index=False)
+
+    st.session_state["experiment_result_df"] = df
+    st.session_state["experiment_result_path"] = str(file_path)
+    st.session_state["experiment_completed"] = True
+    st.session_state["last_selection_feedback"] = ""
+
 
 
 def _render_visual_image(image_path: Path, mode: str) -> None:
@@ -721,9 +854,7 @@ with tab2:
         if login_submitted:
             st.session_state["tab2_authenticated"] = True
             st.session_state["tab2_user_name"] = selected_name
-            st.session_state["visual_log"] = []
-            st.session_state["visual_images"] = []
-            st.session_state["visual_index"] = 0
+            _reset_visual_experiment_state()
 
     if not st.session_state.get("tab2_authenticated", False):
         st.info("Selecciona un nombre para ver el experimento visual.")
@@ -735,91 +866,199 @@ with tab2:
     if st.button("Cambiar de usuario", key="tab2_logout"):
         st.session_state["tab2_authenticated"] = False
         st.session_state["tab2_user_name"] = ""
-        st.session_state["visual_log"] = []
-        st.session_state["visual_images"] = []
-        st.session_state["visual_index"] = 0
+        _reset_visual_experiment_state()
         _trigger_streamlit_rerun()
 
-    if st.session_state.get("visual_mode") not in VISUAL_MODE_OPTIONS:
-        st.session_state["visual_mode"] = random.choice(VISUAL_MODE_OPTIONS)
-        st.session_state["visual_images"] = []
+    sequence = st.session_state.get("mode_sequence", [])
+    if not sequence:
+        st.warning(
+            "No hay modalidades configuradas para el experimento visual. Contacta al administrador."
+        )
+        st.stop()
 
-    if not st.session_state.get("visual_images"):
-        _initialize_visual_session()
+    for mode_option in sequence:
+        _ensure_mode_initialized(mode_option)
 
-    mode = st.session_state.get("visual_mode")
-    images = st.session_state.get("visual_images", [])
+    if st.session_state.get("experiment_completed"):
+        result_path = st.session_state.get("experiment_result_path", "")
+        result_df = st.session_state.get("experiment_result_df")
+        if result_path:
+            st.success(f"✅ Experimento finalizado. Resultados guardados en: {result_path}")
+        else:
+            st.success("✅ Experimento finalizado.")
 
-    st.info(f"Modo de visualización activo: {mode}")
+        if isinstance(result_df, pd.DataFrame) and not result_df.empty:
+            st.dataframe(result_df)
+            download_name = (
+                Path(result_path).name
+                if result_path
+                else "resultados_experimento_visual.xlsx"
+            )
+            st.download_button(
+                "Descargar resultados en Excel",
+                data=_df_to_excel_bytes(result_df),
+                file_name=download_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        else:
+            st.info("No se encontraron datos para descargar.")
+
+        if st.button("Reiniciar experimento", key="restart_experiment"):
+            _reset_visual_experiment_state()
+            _trigger_streamlit_rerun()
+
+        st.stop()
+
+    total_modes = len(sequence)
+    current_index = st.session_state.get("current_mode_index", 0)
+    current_index = max(0, min(current_index, total_modes - 1))
+    st.session_state["current_mode_index"] = current_index
+    current_mode = sequence[current_index]
+
+    _ensure_mode_started(current_mode)
+    mode_sessions = st.session_state.get("mode_sessions", {})
+    current_state = mode_sessions.get(current_mode, {})
+
+    st.markdown("#### Progreso del experimento")
+    progress_records = []
+    for idx, mode_name in enumerate(sequence, start=1):
+        state = mode_sessions.get(mode_name, {})
+        status = state.get("selected") or "Pendiente"
+        progress_records.append(
+            {"Paso": f"{idx}/{total_modes}", "Modo": mode_name, "Estado": status}
+        )
+    progress_df = pd.DataFrame(progress_records)
+    st.table(progress_df)
+
+    feedback = st.session_state.get("last_selection_feedback", "")
+    if feedback:
+        st.success(f"Has seleccionado: {feedback}")
+        st.session_state["last_selection_feedback"] = ""
+
+    st.info(f"Modo de visualización {current_index + 1} de {total_modes}: {current_mode}")
+
+    st.markdown(TAB2_IMAGE_STYLES, unsafe_allow_html=True)
+
+    images = current_state.get("images", [])
 
     if not images:
         st.warning(
             "No se encontraron imágenes para esta modalidad. Verifica la carpeta 'data/images/'."
         )
     else:
-        st.markdown(TAB2_IMAGE_STYLES, unsafe_allow_html=True)
-        if mode == "A/B":
-            columns = st.columns(2)
-            for idx, (col, image_path) in enumerate(zip(columns, images)):
-                with col:
-                    _render_visual_image(image_path, mode)
-                    if st.button("Elegir este producto", key=f"choose_ab_{idx}"):
-                        _register_visual_choice(image_path.stem)
-        elif mode == "Grid":
-            for start in range(0, len(images), 2):
-                columns = st.columns(2)
-                for offset, (col, image_path) in enumerate(
-                    zip(columns, images[start : start + 2])
-                ):
+        if current_mode == "A/B":
+            if len(images) < 2:
+                st.warning("Se necesitan al menos 2 imágenes para el modo A/B.")
+            else:
+                columns = st.columns(len(images))
+                for idx, (col, image_path) in enumerate(zip(columns, images)):
                     with col:
-                        _render_visual_image(image_path, mode)
+                        _render_visual_image(image_path, current_mode)
+                        if current_state.get("selected") == image_path.stem:
+                            st.caption("✅ Seleccionado")
                         if st.button(
                             "Elegir este producto",
-                            key=f"choose_grid_{start + offset}",
+                            key=f"choose_{current_mode}_{idx}",
                         ):
-                            _register_visual_choice(image_path.stem)
+                            _handle_mode_selection(
+                                current_mode, image_path.stem, usuario_activo
+                            )
+                            st.session_state["last_selection_feedback"] = image_path.stem
+                            _trigger_streamlit_rerun()
+        elif current_mode == "Grid":
+            if len(images) < 2:
+                st.warning("Se necesitan al menos 2 imágenes para el modo Grid.")
+            else:
+                for start in range(0, len(images), 2):
+                    columns = st.columns(2)
+                    for offset, (col, image_path) in enumerate(
+                        zip(columns, images[start : start + 2])
+                    ):
+                        with col:
+                            _render_visual_image(image_path, current_mode)
+                            if current_state.get("selected") == image_path.stem:
+                                st.caption("✅ Seleccionado")
+                            if st.button(
+                                "Elegir este producto",
+                                key=f"choose_{current_mode}_{start + offset}",
+                            ):
+                                _handle_mode_selection(
+                                    current_mode, image_path.stem, usuario_activo
+                                )
+                                st.session_state["last_selection_feedback"] = image_path.stem
+                                _trigger_streamlit_rerun()
         else:
-            index = st.session_state.get("visual_index", 0)
-            if index >= len(images):
-                index = len(images) - 1
-                st.session_state["visual_index"] = max(index, 0)
+            total_images = len(images)
+            index = current_state.get("navigation_index", 0)
+            index = max(0, min(index, total_images - 1))
+            if index != current_state.get("navigation_index"):
+                current_state["navigation_index"] = index
+                mode_sessions[current_mode] = current_state
+                st.session_state["mode_sessions"] = mode_sessions
 
-            if images:
-                current_image = images[index]
-                _render_visual_image(current_image, mode)
-                if st.button("Elegir este producto", key=f"choose_seq_{index}"):
-                    _register_visual_choice(current_image.stem)
-
-                next_disabled = index >= len(images) - 1
+            nav_cols = st.columns([1, 2, 1])
+            with nav_cols[0]:
                 if st.button(
-                    "Next Product ▶️",
-                    key="next_product",
-                    disabled=next_disabled,
+                    "◀️ Producto anterior",
+                    key=f"prev_{current_mode}",
+                    disabled=index <= 0,
                 ):
-                    if index < len(images) - 1:
-                        st.session_state["visual_index"] = index + 1
+                    current_state["navigation_index"] = max(0, index - 1)
+                    mode_sessions[current_mode] = current_state
+                    st.session_state["mode_sessions"] = mode_sessions
+                    _trigger_streamlit_rerun()
 
-                if next_disabled:
-                    st.info("Has llegado al último producto de esta secuencia.")
+            nav_cols[1].markdown(
+                f"<div style='text-align:center;font-weight:bold;'>Producto {index + 1} de {total_images}</div>",
+                unsafe_allow_html=True,
+            )
 
-    st.markdown("---")
-    st.subheader("📥 Descarga tus elecciones")
+            with nav_cols[2]:
+                if st.button(
+                    "Siguiente producto ▶️",
+                    key=f"next_{current_mode}",
+                    disabled=index >= total_images - 1,
+                ):
+                    current_state["navigation_index"] = min(total_images - 1, index + 1)
+                    mode_sessions[current_mode] = current_state
+                    st.session_state["mode_sessions"] = mode_sessions
+                    _trigger_streamlit_rerun()
 
-    if st.session_state["visual_log"]:
-        log_df = pd.DataFrame(st.session_state["visual_log"])
-        csv_data = log_df.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            "Descargar registros",
-            data=csv_data,
-            file_name="visual_experiment_log.csv",
-            mime="text/csv",
-        )
+            current_image = images[index]
+            _render_visual_image(current_image, current_mode)
+            if current_state.get("selected") == current_image.stem:
+                st.caption("✅ Seleccionado")
+            if st.button(
+                "Elegir este producto",
+                key=f"choose_{current_mode}_{index}",
+            ):
+                _handle_mode_selection(current_mode, current_image.stem, usuario_activo)
+                mode_sessions = st.session_state.get("mode_sessions", {})
+                current_state = mode_sessions.get(current_mode, current_state)
+                current_state["navigation_index"] = index
+                mode_sessions[current_mode] = current_state
+                st.session_state["mode_sessions"] = mode_sessions
+                st.session_state["last_selection_feedback"] = current_image.stem
+                _trigger_streamlit_rerun()
+
+    selection_made = bool(current_state.get("selected"))
+    is_last_mode = current_index == total_modes - 1
+
+    if not selection_made:
+        st.info("Selecciona un producto para habilitar el siguiente paso.")
+
+    if not is_last_mode:
+        if st.button(
+            "Siguiente modo ▶️",
+            key=f"next_mode_{current_mode}",
+            disabled=not selection_made,
+        ):
+            _advance_visual_mode()
     else:
-        st.info("No hay elecciones registradas todavía.")
-        st.download_button(
-            "Descargar registros",
-            data="".encode("utf-8"),
-            file_name="visual_experiment_log.csv",
-            mime="text/csv",
-            disabled=True,
-        )
+        if st.button(
+            "Finalizar experimento",
+            key="finish_experiment",
+            disabled=not selection_made,
+        ):
+            _complete_visual_experiment(usuario_activo)
+            _trigger_streamlit_rerun()
