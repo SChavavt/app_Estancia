@@ -454,6 +454,8 @@ def _ensure_ab_mode_defaults(mode_state: dict) -> None:
     mode_state.setdefault("ab_winner_indexes", [])
     mode_state.setdefault("ab_stage_choices", [])
     mode_state.setdefault("ab_final_options", [])
+    mode_state.setdefault("ab_stage_starts", {})
+    mode_state.setdefault("ab_stage_durations", {})
 
     if mode_state["ab_stage"] > max_stage:
         mode_state["ab_stage"] = max_stage
@@ -466,6 +468,28 @@ def _ensure_ab_mode_defaults(mode_state: dict) -> None:
                 finalists.append(images[idx].stem)
         if len(finalists) == 2:
             mode_state["ab_final_options"] = finalists
+
+
+def _get_ab_stage_label(stage: int, total_pairs: int) -> Optional[str]:
+    if total_pairs <= 0:
+        return None
+    if stage < total_pairs:
+        return f"pair_{stage + 1}"
+    if stage == total_pairs:
+        return "final"
+    return None
+
+
+def _ensure_ab_stage_started(mode_state: dict) -> None:
+    pairs: list[tuple[int, int]] = mode_state.get("ab_pairs", [])
+    stage: int = mode_state.get("ab_stage", 0)
+    stage_label = _get_ab_stage_label(stage, len(pairs))
+    if stage_label is None:
+        return
+    stage_starts: dict = mode_state.setdefault("ab_stage_starts", {})
+    if stage_label not in stage_starts:
+        stage_starts[stage_label] = datetime.now()
+        mode_state["ab_stage_starts"] = stage_starts
 
 
 def _get_ab_display_indexes(mode_state: dict) -> list[int]:
@@ -505,6 +529,16 @@ def _ensure_mode_initialized(mode: str) -> None:
             _ensure_ab_mode_defaults(mode_state)
             sessions[mode] = mode_state
             st.session_state["mode_sessions"] = sessions
+        elif mode == "Sequential":
+            mode_state.setdefault("seq_product_durations", {})
+            mode_state.setdefault("seq_product_visits", {})
+            mode_state.setdefault("seq_navigation_history", [])
+            mode_state.setdefault("seq_back_clicks", 0)
+            mode_state.setdefault("seq_next_clicks", 0)
+            mode_state.setdefault("seq_view_start", None)
+            mode_state.setdefault("seq_current_image", None)
+            sessions[mode] = mode_state
+            st.session_state["mode_sessions"] = sessions
         return
     images = _load_mode_images(mode)
     mode_state = {
@@ -519,6 +553,14 @@ def _ensure_mode_initialized(mode: str) -> None:
     }
     if mode == "A/B":
         _ensure_ab_mode_defaults(mode_state)
+    if mode == "Sequential":
+        mode_state.setdefault("seq_product_durations", {})
+        mode_state.setdefault("seq_product_visits", {})
+        mode_state.setdefault("seq_navigation_history", [])
+        mode_state.setdefault("seq_back_clicks", 0)
+        mode_state.setdefault("seq_next_clicks", 0)
+        mode_state.setdefault("seq_view_start", None)
+        mode_state.setdefault("seq_current_image", None)
     sessions[mode] = mode_state
     st.session_state["mode_sessions"] = sessions
 
@@ -532,6 +574,115 @@ def _ensure_mode_started(mode: str) -> None:
         mode_state["start_time"] = datetime.now()
         sessions[mode] = mode_state
         st.session_state["mode_sessions"] = sessions
+
+
+def _ensure_seq_view_state(mode_state: dict, current_image: Optional[Path]) -> dict:
+    if current_image is None:
+        return mode_state
+    now = datetime.now()
+    durations: dict = mode_state.setdefault("seq_product_durations", {})
+    visits: dict = mode_state.setdefault("seq_product_visits", {})
+    history: list = mode_state.setdefault("seq_navigation_history", [])
+    current_stem = current_image.stem
+    last_stem = mode_state.get("seq_current_image")
+    view_start: Optional[datetime] = mode_state.get("seq_view_start")
+
+    if current_stem != last_stem:
+        if last_stem and view_start:
+            durations[last_stem] = durations.get(last_stem, 0.0) + (
+                now - view_start
+            ).total_seconds()
+            history.append(
+                {
+                    "timestamp": now.isoformat(),
+                    "event": "leave",
+                    "image": last_stem,
+                }
+            )
+        mode_state["seq_current_image"] = current_stem
+        mode_state["seq_view_start"] = now
+        visits[current_stem] = visits.get(current_stem, 0) + 1
+        history.append(
+            {
+                "timestamp": now.isoformat(),
+                "event": "view",
+                "image": current_stem,
+            }
+        )
+    elif view_start is None:
+        mode_state["seq_view_start"] = now
+        visits[current_stem] = visits.get(current_stem, 0) + 1
+        history.append(
+            {
+                "timestamp": now.isoformat(),
+                "event": "view",
+                "image": current_stem,
+            }
+        )
+    return mode_state
+
+
+def _record_seq_navigation(mode_state: dict, new_index: int, action: str) -> None:
+    now = datetime.now()
+    durations: dict = mode_state.setdefault("seq_product_durations", {})
+    history: list = mode_state.setdefault("seq_navigation_history", [])
+    current_stem = mode_state.get("seq_current_image")
+    view_start: Optional[datetime] = mode_state.get("seq_view_start")
+    if current_stem and view_start:
+        durations[current_stem] = durations.get(current_stem, 0.0) + (
+            now - view_start
+        ).total_seconds()
+        history.append(
+            {
+                "timestamp": now.isoformat(),
+                "event": "leave",
+                "image": current_stem,
+            }
+        )
+    if action == "prev":
+        mode_state["seq_back_clicks"] = mode_state.get("seq_back_clicks", 0) + 1
+    elif action == "next":
+        mode_state["seq_next_clicks"] = mode_state.get("seq_next_clicks", 0) + 1
+    history.append(
+        {
+            "timestamp": now.isoformat(),
+            "event": action,
+            "image": current_stem,
+        }
+    )
+    mode_state["navigation_index"] = new_index
+    mode_state["seq_current_image"] = None
+    mode_state["seq_view_start"] = None
+
+
+def _finalize_sequential_state(mode_state: dict) -> None:
+    current_stem = mode_state.get("seq_current_image")
+    view_start: Optional[datetime] = mode_state.get("seq_view_start")
+    if current_stem and view_start:
+        now = datetime.now()
+        durations: dict = mode_state.setdefault("seq_product_durations", {})
+        history: list = mode_state.setdefault("seq_navigation_history", [])
+        durations[current_stem] = durations.get(current_stem, 0.0) + (
+            now - view_start
+        ).total_seconds()
+        history.append(
+            {
+                "timestamp": now.isoformat(),
+                "event": "finalize",
+                "image": current_stem,
+            }
+        )
+        mode_state["seq_view_start"] = None
+
+
+def _format_metric_dict(metrics: dict) -> str:
+    if not metrics:
+        return ""
+    formatted = {
+        key.replace("_", " "): round(value, 3) if isinstance(value, float) else value
+        for key, value in sorted(metrics.items())
+    }
+    return json.dumps(formatted, ensure_ascii=False)
 
 
 def _handle_ab_mode_selection(mode: str, choice_label: str, participant: str) -> None:
@@ -549,6 +700,9 @@ def _handle_ab_mode_selection(mode: str, choice_label: str, participant: str) ->
     pairs: list[tuple[int, int]] = mode_state.get("ab_pairs", [])
     winner_indexes: list[int] = mode_state.setdefault("ab_winner_indexes", [])
     stage_choices: list[str] = mode_state.setdefault("ab_stage_choices", [])
+    stage_starts: dict = mode_state.setdefault("ab_stage_starts", {})
+    stage_durations: dict = mode_state.setdefault("ab_stage_durations", {})
+    total_pairs = len(pairs)
 
     def _find_index(candidate_indexes: list[int]) -> Optional[int]:
         for idx in candidate_indexes:
@@ -564,6 +718,16 @@ def _handle_ab_mode_selection(mode: str, choice_label: str, participant: str) ->
         selected_index = _find_index(current_pair)
         if selected_index is None:
             return
+        stage_label = _get_ab_stage_label(stage, total_pairs)
+        if stage_label and stage_label in stage_starts:
+            stage_durations[stage_label] = stage_durations.get(stage_label, 0.0) + (
+                now - stage_starts[stage_label]
+            ).total_seconds()
+        elif stage_label and mode_state.get("start_time"):
+            stage_durations[stage_label] = stage_durations.get(stage_label, 0.0) + (
+                now - mode_state["start_time"]
+            ).total_seconds()
+
         if len(winner_indexes) <= stage:
             winner_indexes.append(selected_index)
         else:
@@ -585,6 +749,12 @@ def _handle_ab_mode_selection(mode: str, choice_label: str, participant: str) ->
             ]
             if len(finalists) == 2:
                 mode_state["ab_final_options"] = finalists
+
+        next_stage_label = _get_ab_stage_label(stage + 1, total_pairs)
+        if next_stage_label:
+            stage_starts[next_stage_label] = now
+        mode_state["ab_stage_durations"] = stage_durations
+        mode_state["ab_stage_starts"] = stage_starts
 
         sessions[mode] = mode_state
         st.session_state["mode_sessions"] = sessions
@@ -608,6 +778,18 @@ def _handle_ab_mode_selection(mode: str, choice_label: str, participant: str) ->
     if start_time:
         mode_state["selection_duration"] = (now - start_time).total_seconds()
     mode_state["ab_stage"] = len(pairs) + 1
+
+    final_stage_label = _get_ab_stage_label(total_pairs, total_pairs)
+    if final_stage_label and final_stage_label in stage_starts:
+        stage_durations[final_stage_label] = stage_durations.get(
+            final_stage_label, 0.0
+        ) + (now - stage_starts[final_stage_label]).total_seconds()
+    elif final_stage_label and mode_state.get("start_time"):
+        stage_durations[final_stage_label] = stage_durations.get(
+            final_stage_label, 0.0
+        ) + (now - mode_state["start_time"]).total_seconds()
+    mode_state["ab_stage_durations"] = stage_durations
+    mode_state["ab_stage_starts"] = stage_starts
 
     finalists = [
         images[idx].stem
@@ -677,6 +859,8 @@ def _advance_visual_mode() -> None:
     current_mode = sequence[index]
     sessions: dict = st.session_state.get("mode_sessions", {})
     mode_state = sessions.get(current_mode, {})
+    if current_mode == "Sequential":
+        _finalize_sequential_state(mode_state)
     mode_state.setdefault("completion_timestamp", datetime.now())
     sessions[current_mode] = mode_state
     st.session_state["mode_sessions"] = sessions
@@ -698,19 +882,45 @@ def _build_experiment_dataframe(user_name: str) -> pd.DataFrame:
         mode_duration = None
         if start_time and completion_time:
             mode_duration = (completion_time - start_time).total_seconds()
-        records.append(
-            {
-                "Usuario": user_name,
-                "Modo": mode,
-                "Opciones Presentadas": ", ".join(state.get("options", [])),
-                "Producto Seleccionado": state.get("selected") or "",
-                "Tiempo hasta selección (s)": selection_duration,
-                "Duración del modo (s)": mode_duration,
-                "Inicio del modo": start_time.isoformat() if start_time else "",
-                "Momento de selección": selection_time.isoformat() if selection_time else "",
-                "Momento de finalización": completion_time.isoformat() if completion_time else "",
-            }
-        )
+        record = {
+            "Usuario": user_name,
+            "Modo": mode,
+            "Opciones Presentadas": ", ".join(state.get("options", [])),
+            "Producto Seleccionado": state.get("selected") or "",
+            "Tiempo hasta selección (s)": selection_duration,
+            "Duración del modo (s)": mode_duration,
+            "Inicio del modo": start_time.isoformat() if start_time else "",
+            "Momento de selección": selection_time.isoformat() if selection_time else "",
+            "Momento de finalización": completion_time.isoformat() if completion_time else "",
+        }
+
+        if mode == "A/B":
+            stage_durations = state.get("ab_stage_durations", {})
+            record["Tiempo comparación A/B · Par 1 (s)"] = stage_durations.get("pair_1")
+            record["Tiempo comparación A/B · Par 2 (s)"] = stage_durations.get("pair_2")
+            record["Tiempo comparación A/B · Final (s)"] = stage_durations.get("final")
+
+        if mode == "Sequential":
+            durations_map = state.get("seq_product_durations", {})
+            visits_map = state.get("seq_product_visits", {})
+            history = state.get("seq_navigation_history", [])
+            record["Secuencial · Tiempo por producto (s)"] = _format_metric_dict(
+                durations_map
+            )
+            record["Secuencial · Visitas por producto"] = _format_metric_dict(
+                visits_map
+            )
+            record["Secuencial · Veces botón regresar"] = state.get(
+                "seq_back_clicks", 0
+            )
+            record["Secuencial · Veces botón siguiente"] = state.get(
+                "seq_next_clicks", 0
+            )
+            record["Secuencial · Historial navegación"] = (
+                json.dumps(history, ensure_ascii=False) if history else ""
+            )
+
+        records.append(record)
     return pd.DataFrame(records)
 
 
@@ -720,9 +930,17 @@ def _complete_visual_experiment(user_name: str) -> None:
     if current_mode in sessions:
         mode_state = sessions[current_mode]
         if mode_state.get("completion_timestamp") is None:
+            if current_mode == "Sequential":
+                _finalize_sequential_state(mode_state)
             mode_state["completion_timestamp"] = datetime.now()
             sessions[current_mode] = mode_state
             st.session_state["mode_sessions"] = sessions
+
+    for mode_name, mode_state in sessions.items():
+        if mode_name == "Sequential":
+            _finalize_sequential_state(mode_state)
+            sessions[mode_name] = mode_state
+    st.session_state["mode_sessions"] = sessions
 
     df = _build_experiment_dataframe(user_name)
     VISUAL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -1194,6 +1412,10 @@ with tab2:
                 stage_choices = current_state.get("ab_stage_choices", [])
                 finalists = current_state.get("ab_final_options", [])
 
+                _ensure_ab_stage_started(current_state)
+                mode_sessions[current_mode] = current_state
+                st.session_state["mode_sessions"] = mode_sessions
+
                 if stage == 0:
                     st.info(t("tab2_ab_step_one"))
                 elif stage == 1:
@@ -1279,6 +1501,10 @@ with tab2:
                 st.session_state["mode_sessions"] = mode_sessions
 
             current_image = images[index]
+            current_state = _ensure_seq_view_state(current_state, current_image)
+            mode_sessions[current_mode] = current_state
+            st.session_state["mode_sessions"] = mode_sessions
+
             _render_visual_image(current_image, current_mode)
 
             prev_clicked = False
@@ -1322,7 +1548,8 @@ with tab2:
             )
 
             if prev_clicked:
-                current_state["navigation_index"] = max(0, index - 1)
+                new_index = max(0, index - 1)
+                _record_seq_navigation(current_state, new_index, "prev")
                 mode_sessions[current_mode] = current_state
                 st.session_state["mode_sessions"] = mode_sessions
                 _trigger_streamlit_rerun()
@@ -1338,7 +1565,8 @@ with tab2:
                 _trigger_streamlit_rerun()
 
             if next_clicked:
-                current_state["navigation_index"] = min(total_images - 1, index + 1)
+                new_index = min(total_images - 1, index + 1)
+                _record_seq_navigation(current_state, new_index, "next")
                 mode_sessions[current_mode] = current_state
                 st.session_state["mode_sessions"] = mode_sessions
                 _trigger_streamlit_rerun()
