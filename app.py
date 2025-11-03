@@ -66,7 +66,7 @@ LANGUAGE_CONTENT = {
         "tab2_restart_experiment": "Restart experiment",
         "tab2_mode_info": "Viewing mode {current} of {total}: {mode}",
         "tab2_no_images_warning": "No images were found for this mode. Check the 'data/images/' folder.",
-        "tab2_need_two_images_ab": "At least 2 images are required for A/B mode.",
+        "tab2_need_four_images_ab": "At least 4 images are required for A/B mode.",
         "tab2_need_two_images_grid": "At least 2 images are required for Grid mode.",
         "tab2_selected_label": "✅ Selected",
         "tab2_choose_product": "Choose this product",
@@ -76,6 +76,12 @@ LANGUAGE_CONTENT = {
         "tab2_select_to_continue": "Select a product to enable the next step.",
         "tab2_next_mode": "Next mode ▶️",
         "tab2_finish_experiment": "Finish experiment",
+        "tab2_ab_step_one": "Step 1 of 3: Choose your favorite from the first pair.",
+        "tab2_ab_step_two": "Step 2 of 3: Choose your favorite from the second pair.",
+        "tab2_ab_step_three": "Final step: Choose your favorite between the two finalists.",
+        "tab2_ab_first_winner": "First finalist selected: {choice}.",
+        "tab2_ab_second_winner": "Second finalist selected: {choice}.",
+        "tab2_ab_finalists": "Finalists: {first} vs {second}.",
     },
     "Español": {
         "page_title": "🧠 Smart Core – Cuestionario",
@@ -124,7 +130,7 @@ LANGUAGE_CONTENT = {
         "tab2_restart_experiment": "Reiniciar experimento",
         "tab2_mode_info": "Modo de visualización {current} de {total}: {mode}",
         "tab2_no_images_warning": "No se encontraron imágenes para esta modalidad. Verifica la carpeta 'data/images/'.",
-        "tab2_need_two_images_ab": "Se necesitan al menos 2 imágenes para el modo A/B.",
+        "tab2_need_four_images_ab": "Se necesitan al menos 4 imágenes para el modo A/B.",
         "tab2_need_two_images_grid": "Se necesitan al menos 2 imágenes para el modo Grid.",
         "tab2_selected_label": "✅ Seleccionado",
         "tab2_choose_product": "Elegir este producto",
@@ -134,6 +140,12 @@ LANGUAGE_CONTENT = {
         "tab2_select_to_continue": "Selecciona un producto para habilitar el siguiente paso.",
         "tab2_next_mode": "Siguiente modo ▶️",
         "tab2_finish_experiment": "Finalizar experimento",
+        "tab2_ab_step_one": "Paso 1 de 3: Elige tu favorito del primer par.",
+        "tab2_ab_step_two": "Paso 2 de 3: Elige tu favorito del segundo par.",
+        "tab2_ab_step_three": "Paso final: Elige tu favorito entre los dos finalistas.",
+        "tab2_ab_first_winner": "Primer finalista seleccionado: {choice}.",
+        "tab2_ab_second_winner": "Segundo finalista seleccionado: {choice}.",
+        "tab2_ab_finalists": "Finalistas: {first} vs {second}.",
     },
 }
 
@@ -405,12 +417,67 @@ def _load_mode_images(mode: str) -> list[Path]:
     image_paths = _load_image_paths(folder)
     random.shuffle(image_paths)
     if mode == "A/B":
-        return image_paths[:2]
+        return image_paths[:4]
     if mode == "Grid":
         return image_paths[:4]
     if mode == "Sequential":
         return image_paths[:4] if len(image_paths) > 4 else image_paths
     return image_paths
+
+
+def _ensure_ab_mode_defaults(mode_state: dict) -> None:
+    images: list[Path] = mode_state.get("images", [])
+    total_images = len(images)
+    raw_pairs = mode_state.get("ab_pairs")
+    if not raw_pairs:
+        pairs: list[tuple[int, int]] = []
+        if total_images >= 2:
+            pairs.append((0, 1))
+        if total_images >= 4:
+            pairs.append((2, 3))
+        mode_state["ab_pairs"] = pairs
+    else:
+        normalized_pairs: list[tuple[int, int]] = []
+        for pair in raw_pairs:
+            if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+                continue
+            first, second = pair
+            if not isinstance(first, int) or not isinstance(second, int):
+                continue
+            normalized_pairs.append((first, second))
+        mode_state["ab_pairs"] = normalized_pairs
+
+    pairs = mode_state.get("ab_pairs", [])
+    max_stage = len(pairs) + 1 if pairs else 1
+
+    mode_state.setdefault("ab_stage", 0)
+    mode_state.setdefault("ab_winner_indexes", [])
+    mode_state.setdefault("ab_stage_choices", [])
+    mode_state.setdefault("ab_final_options", [])
+
+    if mode_state["ab_stage"] > max_stage:
+        mode_state["ab_stage"] = max_stage
+
+    winner_indexes: list[int] = mode_state.get("ab_winner_indexes", [])
+    if len(mode_state.get("ab_final_options", [])) < 2 and len(winner_indexes) >= 2:
+        finalists: list[str] = []
+        for idx in winner_indexes[:2]:
+            if 0 <= idx < total_images:
+                finalists.append(images[idx].stem)
+        if len(finalists) == 2:
+            mode_state["ab_final_options"] = finalists
+
+
+def _get_ab_display_indexes(mode_state: dict) -> list[int]:
+    images: list[Path] = mode_state.get("images", [])
+    total_images = len(images)
+    stage: int = mode_state.get("ab_stage", 0)
+    pairs: list[tuple[int, int]] = mode_state.get("ab_pairs", [])
+    if stage < len(pairs):
+        current_pair = pairs[stage]
+        return [idx for idx in current_pair if 0 <= idx < total_images]
+    winner_indexes: list[int] = mode_state.get("ab_winner_indexes", [])
+    return [idx for idx in winner_indexes[:2] if 0 <= idx < total_images]
 
 
 def _sanitize_filename_component(value: str) -> str:
@@ -432,11 +499,15 @@ def _reset_visual_experiment_state() -> None:
 
 def _ensure_mode_initialized(mode: str) -> None:
     sessions: dict = st.session_state.setdefault("mode_sessions", {})
-    if mode in sessions:
-        if sessions[mode].get("images"):
-            return
+    mode_state = sessions.get(mode)
+    if mode_state and mode_state.get("images"):
+        if mode == "A/B":
+            _ensure_ab_mode_defaults(mode_state)
+            sessions[mode] = mode_state
+            st.session_state["mode_sessions"] = sessions
+        return
     images = _load_mode_images(mode)
-    sessions[mode] = {
+    mode_state = {
         "images": images,
         "options": [img.stem for img in images],
         "selected": None,
@@ -446,6 +517,9 @@ def _ensure_mode_initialized(mode: str) -> None:
         "completion_timestamp": None,
         "navigation_index": 0,
     }
+    if mode == "A/B":
+        _ensure_ab_mode_defaults(mode_state)
+    sessions[mode] = mode_state
     st.session_state["mode_sessions"] = sessions
 
 
@@ -460,7 +534,112 @@ def _ensure_mode_started(mode: str) -> None:
         st.session_state["mode_sessions"] = sessions
 
 
+def _handle_ab_mode_selection(mode: str, choice_label: str, participant: str) -> None:
+    sessions: dict = st.session_state.get("mode_sessions", {})
+    mode_state = sessions.get(mode)
+    if not mode_state:
+        return
+
+    now = datetime.now()
+    images: list[Path] = mode_state.get("images", [])
+    if mode_state.get("start_time") is None:
+        mode_state["start_time"] = now
+
+    stage: int = mode_state.get("ab_stage", 0)
+    pairs: list[tuple[int, int]] = mode_state.get("ab_pairs", [])
+    winner_indexes: list[int] = mode_state.setdefault("ab_winner_indexes", [])
+    stage_choices: list[str] = mode_state.setdefault("ab_stage_choices", [])
+
+    def _find_index(candidate_indexes: list[int]) -> Optional[int]:
+        for idx in candidate_indexes:
+            if 0 <= idx < len(images) and images[idx].stem == choice_label:
+                return idx
+        for idx, image in enumerate(images):
+            if image.stem == choice_label:
+                return idx
+        return None
+
+    if stage < len(pairs):
+        current_pair = [idx for idx in pairs[stage] if 0 <= idx < len(images)]
+        selected_index = _find_index(current_pair)
+        if selected_index is None:
+            return
+        if len(winner_indexes) <= stage:
+            winner_indexes.append(selected_index)
+        else:
+            winner_indexes[stage] = selected_index
+        if len(stage_choices) <= stage:
+            stage_choices.append(choice_label)
+        else:
+            stage_choices[stage] = choice_label
+
+        mode_state["ab_winner_indexes"] = winner_indexes[:2]
+        mode_state["ab_stage_choices"] = stage_choices[:2]
+        mode_state["ab_stage"] = stage + 1
+
+        if mode_state["ab_stage"] == len(pairs):
+            finalists = [
+                images[idx].stem
+                for idx in mode_state["ab_winner_indexes"]
+                if 0 <= idx < len(images)
+            ]
+            if len(finalists) == 2:
+                mode_state["ab_final_options"] = finalists
+
+        sessions[mode] = mode_state
+        st.session_state["mode_sessions"] = sessions
+        return
+
+    finalists_indexes = [
+        idx
+        for idx in mode_state.get("ab_winner_indexes", [])[:2]
+        if 0 <= idx < len(images)
+    ]
+    if len(finalists_indexes) < 2:
+        return
+
+    selected_index = _find_index(finalists_indexes)
+    if selected_index is None:
+        return
+
+    mode_state["selected"] = choice_label
+    mode_state["selection_timestamp"] = now
+    start_time = mode_state.get("start_time")
+    if start_time:
+        mode_state["selection_duration"] = (now - start_time).total_seconds()
+    mode_state["ab_stage"] = len(pairs) + 1
+
+    finalists = [
+        images[idx].stem
+        for idx in finalists_indexes
+        if 0 <= idx < len(images)
+    ]
+    if len(finalists) == 2:
+        mode_state["ab_final_options"] = finalists
+
+    sessions[mode] = mode_state
+    st.session_state["mode_sessions"] = sessions
+
+    log_entry = {
+        "timestamp": now.isoformat(),
+        "participant_name": participant,
+        "mode": mode,
+        "choice": choice_label,
+        "options": mode_state.get("ab_final_options") or mode_state.get("options", []),
+        "selection_duration_seconds": mode_state.get("selection_duration"),
+    }
+
+    filtered_log = [
+        entry for entry in st.session_state.get("visual_log", []) if entry.get("mode") != mode
+    ]
+    filtered_log.append(log_entry)
+    st.session_state["visual_log"] = filtered_log
+
+
 def _handle_mode_selection(mode: str, choice_label: str, participant: str) -> None:
+    if mode == "A/B":
+        _handle_ab_mode_selection(mode, choice_label, participant)
+        return
     sessions: dict = st.session_state.get("mode_sessions", {})
     mode_state = sessions.get(mode)
     if not mode_state:
@@ -1008,24 +1187,66 @@ with tab2:
         st.warning(t("tab2_no_images_warning"))
     else:
         if current_mode == "A/B":
-            if len(images) < 2:
-                st.warning(t("tab2_need_two_images_ab"))
+            if len(images) < 4:
+                st.warning(t("tab2_need_four_images_ab"))
             else:
-                columns = st.columns(len(images))
-                for idx, (col, image_path) in enumerate(zip(columns, images)):
-                    with col:
-                        _render_visual_image(image_path, current_mode)
-                        if current_state.get("selected") == image_path.stem:
-                            st.caption(t("tab2_selected_label"))
-                        if st.button(
-                            t("tab2_choose_product"),
-                            key=f"choose_{current_mode}_{idx}",
-                        ):
-                            _handle_mode_selection(
-                                current_mode, image_path.stem, usuario_activo
+                stage = current_state.get("ab_stage", 0)
+                stage_choices = current_state.get("ab_stage_choices", [])
+                finalists = current_state.get("ab_final_options", [])
+
+                if stage == 0:
+                    st.info(t("tab2_ab_step_one"))
+                elif stage == 1:
+                    if stage_choices:
+                        first_choice = stage_choices[0].replace("_", " ")
+                        st.success(t("tab2_ab_first_winner", choice=first_choice))
+                    st.info(t("tab2_ab_step_two"))
+                else:
+                    if stage_choices:
+                        first_choice = stage_choices[0].replace("_", " ")
+                        st.success(t("tab2_ab_first_winner", choice=first_choice))
+                    if len(stage_choices) >= 2:
+                        second_choice = stage_choices[1].replace("_", " ")
+                        st.success(t("tab2_ab_second_winner", choice=second_choice))
+                    if len(finalists) == 2:
+                        first_finalist = finalists[0].replace("_", " ")
+                        second_finalist = finalists[1].replace("_", " ")
+                        st.info(
+                            t(
+                                "tab2_ab_finalists",
+                                first=first_finalist,
+                                second=second_finalist,
                             )
-                            st.session_state["last_selection_feedback"] = image_path.stem
-                            _trigger_streamlit_rerun()
+                        )
+                    if not current_state.get("selected"):
+                        st.info(t("tab2_ab_step_three"))
+
+                display_indexes = _get_ab_display_indexes(current_state)
+                if len(display_indexes) != 2:
+                    st.warning(t("tab2_no_images_warning"))
+                else:
+                    columns = st.columns(2)
+                    for idx, (col, image_index) in enumerate(
+                        zip(columns, display_indexes)
+                    ):
+                        if not (0 <= image_index < len(images)):
+                            continue
+                        image_path = images[image_index]
+                        with col:
+                            _render_visual_image(image_path, current_mode)
+                            if current_state.get("selected") == image_path.stem:
+                                st.caption(t("tab2_selected_label"))
+                            if st.button(
+                                t("tab2_choose_product"),
+                                key=f"choose_{current_mode}_{stage}_{idx}",
+                            ):
+                                _handle_mode_selection(
+                                    current_mode, image_path.stem, usuario_activo
+                                )
+                                st.session_state["last_selection_feedback"] = (
+                                    image_path.stem
+                                )
+                                _trigger_streamlit_rerun()
         elif current_mode == "Grid":
             if len(images) < 2:
                 st.warning(t("tab2_need_two_images_grid"))
