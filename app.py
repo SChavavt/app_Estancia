@@ -4,6 +4,8 @@ import json
 import random
 import base64
 import html
+import threading
+import time
 from io import BytesIO
 from datetime import datetime
 from pathlib import Path
@@ -12,6 +14,8 @@ from typing import Optional
 import pandas as pd
 import streamlit as st
 from github import Github, GithubException
+import msgpack
+import zmq
 
 # =========================================================
 # CONFIG
@@ -1050,10 +1054,218 @@ def _load_registered_names(path: Path) -> tuple[list[str], Optional[str]]:
 
 
 # =========================================================
+# PUPIL LABS STREAMING HELPERS
+# =========================================================
+PUPIL_CONNECTION_OPTIONS = {
+    "Local (127.0.0.1:50020)": "127.0.0.1:50020",
+    "Remoto (192.168.1.117:50020)": "192.168.1.117:50020",
+}
+PUPIL_TOPIC = "gaze.3d.01"
+
+
+def _initialize_pupil_session_state() -> None:
+    if "pupil_metrics" not in st.session_state:
+        st.session_state["pupil_metrics"] = []
+    if "pupil_start_time" not in st.session_state:
+        st.session_state["pupil_start_time"] = None
+    if "pupil_thread" not in st.session_state:
+        st.session_state["pupil_thread"] = None
+    if "pupil_thread_stop" not in st.session_state:
+        st.session_state["pupil_thread_stop"] = None
+    if "pupil_socket" not in st.session_state:
+        st.session_state["pupil_socket"] = None
+    if "pupil_capturing" not in st.session_state:
+        st.session_state["pupil_capturing"] = False
+    if "pupil_endpoint" not in st.session_state:
+        st.session_state["pupil_endpoint"] = PUPIL_CONNECTION_OPTIONS[
+            "Local (127.0.0.1:50020)"
+        ]
+    if "pupil_connection_mode" not in st.session_state:
+        st.session_state["pupil_connection_mode"] = list(PUPIL_CONNECTION_OPTIONS.keys())[0]
+    if "pupil_metrics_lock" not in st.session_state:
+        st.session_state["pupil_metrics_lock"] = threading.Lock()
+    if "pupil_metrics_placeholder" not in st.session_state:
+        st.session_state["pupil_metrics_placeholder"] = None
+
+
+def _stop_pupil_capture() -> None:
+    stop_event: Optional[threading.Event] = st.session_state.get("pupil_thread_stop")
+    thread: Optional[threading.Thread] = st.session_state.get("pupil_thread")
+    socket = st.session_state.get("pupil_socket")
+
+    if stop_event is not None:
+        stop_event.set()
+
+    if thread and thread.is_alive():
+        thread.join(timeout=1.0)
+
+    if socket is not None:
+        try:
+            socket.close(0)
+        except zmq.ZMQError:
+            pass
+
+    st.session_state["pupil_socket"] = None
+    st.session_state["pupil_thread"] = None
+    st.session_state["pupil_thread_stop"] = None
+    st.session_state["pupil_capturing"] = False
+
+
+def _append_pupil_metric(gaze_data: dict) -> None:
+    now = datetime.now()
+    start_time = st.session_state.get("pupil_start_time")
+    relative_time = None
+    if isinstance(start_time, datetime):
+        relative_time = (now - start_time).total_seconds()
+
+    norm_pos_x = None
+    norm_pos_y = None
+    norm_pos = gaze_data.get("norm_pos")
+    if isinstance(norm_pos, dict):
+        norm_pos_x = norm_pos.get("x")
+        norm_pos_y = norm_pos.get("y")
+    elif isinstance(norm_pos, (list, tuple)) and len(norm_pos) >= 2:
+        norm_pos_x = norm_pos[0]
+        norm_pos_y = norm_pos[1]
+
+    user_name = (
+        st.session_state.get("tab2_user_name")
+        or st.session_state.get("nombre_completo")
+        or ""
+    )
+
+    metric = {
+        "timestamp": now.isoformat(),
+        "relative_time": relative_time,
+        "norm_pos_x": norm_pos_x,
+        "norm_pos_y": norm_pos_y,
+        "confidence": gaze_data.get("confidence"),
+        "user_name": user_name,
+    }
+
+    if "timestamp" in gaze_data:
+        metric["pupil_timestamp"] = gaze_data["timestamp"]
+
+    lock: threading.Lock = st.session_state["pupil_metrics_lock"]
+    with lock:
+        st.session_state["pupil_metrics"].append(metric)
+
+
+def _pupil_listener_thread(stop_event: threading.Event, socket: zmq.Socket) -> None:
+    while not stop_event.is_set():
+        try:
+            while True:
+                try:
+                    frames = socket.recv_multipart(flags=zmq.NOBLOCK)
+                except zmq.Again:
+                    break
+                gaze_payload = frames[-1] if frames else b""
+                try:
+                    gaze_data = msgpack.loads(gaze_payload, raw=False)
+                except Exception:
+                    gaze_data = {}
+                if isinstance(gaze_data, dict):
+                    _append_pupil_metric(gaze_data)
+        except zmq.ZMQError:
+            stop_event.set()
+
+        placeholder = st.session_state.get("pupil_metrics_placeholder")
+        lock: threading.Lock = st.session_state["pupil_metrics_lock"]
+        with lock:
+            recent_metrics = st.session_state["pupil_metrics"][-10:]
+
+        if placeholder is not None:
+            if recent_metrics:
+                df_display = pd.DataFrame(recent_metrics)
+                display_columns = [
+                    col
+                    for col in [
+                        "timestamp",
+                        "relative_time",
+                        "norm_pos_x",
+                        "norm_pos_y",
+                        "confidence",
+                        "user_name",
+                    ]
+                    if col in df_display.columns
+                ]
+                placeholder.dataframe(df_display[display_columns])
+            else:
+                placeholder.info("Esperando datos de Pupil Service...")
+
+        time.sleep(1)
+
+
+def _start_pupil_capture(endpoint: str) -> bool:
+    _initialize_pupil_session_state()
+
+    host = endpoint
+    port = "50020"
+    if ":" in endpoint:
+        host, port = endpoint.split(":", 1)
+
+    context = zmq.Context.instance()
+    req_socket = context.socket(zmq.REQ)
+    req_socket.setsockopt(zmq.LINGER, 0)
+    req_socket.setsockopt(zmq.RCVTIMEO, 2000)
+    req_socket.setsockopt(zmq.SNDTIMEO, 2000)
+
+    try:
+        req_socket.connect(f"tcp://{host}:{port}")
+        req_socket.send_string("SUB_PORT")
+        sub_port = req_socket.recv_string()
+    except zmq.ZMQError:
+        try:
+            req_socket.close(0)
+        except zmq.ZMQError:
+            pass
+        return False
+    finally:
+        try:
+            req_socket.close(0)
+        except zmq.ZMQError:
+            pass
+
+    sub_socket = context.socket(zmq.SUB)
+    sub_socket.setsockopt(zmq.LINGER, 0)
+    sub_socket.setsockopt_string(zmq.SUBSCRIBE, PUPIL_TOPIC)
+
+    try:
+        sub_socket.connect(f"tcp://{host}:{sub_port}")
+    except zmq.ZMQError:
+        try:
+            sub_socket.close(0)
+        except zmq.ZMQError:
+            pass
+        return False
+
+    st.session_state["pupil_socket"] = sub_socket
+    st.session_state["pupil_capturing"] = True
+    st.session_state["pupil_start_time"] = datetime.now()
+    st.session_state["pupil_metrics"] = []
+
+    stop_event = threading.Event()
+    st.session_state["pupil_thread_stop"] = stop_event
+    listener_thread = threading.Thread(
+        target=_pupil_listener_thread,
+        args=(stop_event, sub_socket),
+        daemon=True,
+    )
+    st.session_state["pupil_thread"] = listener_thread
+    listener_thread.start()
+
+    return True
+
+
+# =========================================================
 # INTERFACES
 # =========================================================
-tab1, tab2 = st.tabs(
-    ["📝 SmartScore Questionnaire", "👁️ Experimento Visual (Sin Smart Score)"]
+tab1, tab2, tab3 = st.tabs(
+    [
+        "📝 SmartScore Questionnaire",
+        "👁️ Experimento Visual (Sin Smart Score)",
+        "📊 Métricas Pupil Labs (Tiempo Real)",
+    ]
 )
 
 with tab1:
@@ -1586,3 +1798,117 @@ with tab2:
         ):
             _complete_visual_experiment(usuario_activo)
             _trigger_streamlit_rerun()
+
+with tab3:
+    _initialize_pupil_session_state()
+
+    st.header("📊 Métricas Pupil Labs (Tiempo Real)")
+    st.caption(
+        "Monitoreo en vivo de datos de mirada y confianza registrados desde Pupil Service."
+    )
+
+    connection_labels = list(PUPIL_CONNECTION_OPTIONS.keys())
+    default_label = st.session_state.get("pupil_connection_mode", connection_labels[0])
+    if default_label not in connection_labels:
+        default_label = connection_labels[0]
+
+    selected_mode = st.radio(
+        "🌐 Modo de conexión",
+        connection_labels,
+        index=connection_labels.index(default_label),
+        key="pupil_connection_mode",
+    )
+
+    endpoint = PUPIL_CONNECTION_OPTIONS[selected_mode]
+    st.session_state["pupil_connection_mode"] = selected_mode
+    st.session_state["pupil_endpoint"] = endpoint
+
+    controls_col1, controls_col2, controls_col3 = st.columns(3)
+
+    with controls_col1:
+        start_capture = st.button(
+            "▶️ Iniciar captura",
+            use_container_width=True,
+            disabled=st.session_state.get("pupil_capturing", False),
+        )
+    with controls_col2:
+        stop_capture = st.button(
+            "⏹ Detener captura",
+            use_container_width=True,
+            disabled=not st.session_state.get("pupil_capturing", False),
+        )
+
+    metrics_placeholder = st.empty()
+    st.session_state["pupil_metrics_placeholder"] = metrics_placeholder
+
+    if start_capture:
+        if st.session_state.get("pupil_capturing"):
+            _stop_pupil_capture()
+        if not _start_pupil_capture(endpoint):
+            _stop_pupil_capture()
+            st.warning(
+                "⚠️ No se pudo conectar a Pupil Service. Verifica que Pupil Capture esté activo o usa modo local."
+            )
+
+    if stop_capture:
+        _stop_pupil_capture()
+
+    if st.session_state.get("pupil_capturing"):
+        st.success(f"Recibiendo métricas desde tcp://{endpoint}")
+    else:
+        st.info("Captura detenida. Usa el botón de iniciar para reconectar.")
+
+    with controls_col3:
+        metrics_available = bool(st.session_state.get("pupil_metrics"))
+        usuario = (
+            st.session_state.get("tab2_user_name")
+            or st.session_state.get("nombre_completo")
+            or "usuario"
+        )
+        safe_user = re.sub(r"[^A-Za-z0-9_-]+", "_", usuario.strip()) or "usuario"
+        if metrics_available:
+            df_metrics = pd.DataFrame(st.session_state["pupil_metrics"])
+            data_path = Path("data") / f"pupil_metrics_{safe_user}.xlsx"
+            data_path.parent.mkdir(parents=True, exist_ok=True)
+            df_metrics.to_excel(data_path, index=False)
+            excel_buffer = BytesIO()
+            df_metrics.to_excel(excel_buffer, index=False)
+            excel_buffer.seek(0)
+            st.download_button(
+                "💾 Descargar métricas",
+                data=excel_buffer.getvalue(),
+                file_name=f"pupil_metrics_{safe_user}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+        else:
+            st.download_button(
+                "💾 Descargar métricas",
+                data=b"",
+                file_name="pupil_metrics_usuario.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                disabled=True,
+            )
+
+    if not st.session_state.get("pupil_capturing"):
+        lock: threading.Lock = st.session_state["pupil_metrics_lock"]
+        with lock:
+            recent_metrics = st.session_state["pupil_metrics"][-10:]
+        if recent_metrics:
+            df_recent = pd.DataFrame(recent_metrics)
+            display_columns = [
+                col
+                for col in [
+                    "timestamp",
+                    "relative_time",
+                    "norm_pos_x",
+                    "norm_pos_y",
+                    "confidence",
+                    "user_name",
+                ]
+                if col in df_recent.columns
+            ]
+            metrics_placeholder.dataframe(df_recent[display_columns])
+        else:
+            metrics_placeholder.info("Aún no hay métricas registradas.")
