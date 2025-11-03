@@ -1836,7 +1836,6 @@ with tab3:
     )
 
     endpoint = PUPIL_CONNECTION_OPTIONS[selected_mode]
-    st.session_state["pupil_connection_mode"] = selected_mode
     st.session_state["pupil_endpoint"] = endpoint
 
     controls_col1, controls_col2, controls_col3 = st.columns(3)
