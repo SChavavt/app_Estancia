@@ -1388,44 +1388,18 @@ with tab2:
     mode_sessions = st.session_state.get("mode_sessions", {})
     current_state = mode_sessions.get(current_mode, {})
 
-    images = current_state.get("images", [])
-
-    stage_message = ""
-    ab_stage = None
-    ab_stage_choices = []
-    ab_finalists = []
-
-    if current_mode == "A/B" and len(images) >= 4:
-        _ensure_ab_stage_started(current_state)
-        mode_sessions[current_mode] = current_state
-        st.session_state["mode_sessions"] = mode_sessions
-
-        ab_stage = current_state.get("ab_stage", 0)
-        ab_stage_choices = current_state.get("ab_stage_choices", [])
-        ab_finalists = current_state.get("ab_final_options", [])
-
-        if ab_stage == 0:
-            stage_message = t("tab2_ab_step_one")
-        elif ab_stage == 1:
-            stage_message = t("tab2_ab_step_two")
-        else:
-            if not current_state.get("selected"):
-                stage_message = t("tab2_ab_step_three")
-
-    mode_info_lines = [
+    st.info(
         t(
             "tab2_mode_info",
             current=current_index + 1,
             total=total_modes,
             mode=current_mode,
         )
-    ]
-    if stage_message:
-        mode_info_lines.append(stage_message)
-
-    st.info("  \n".join(mode_info_lines))
+    )
 
     st.markdown(TAB2_IMAGE_STYLES, unsafe_allow_html=True)
+
+    images = current_state.get("images", [])
 
     if not images:
         st.warning(t("tab2_no_images_warning"))
@@ -1434,26 +1408,40 @@ with tab2:
             if len(images) < 4:
                 st.warning(t("tab2_need_four_images_ab"))
             else:
-                if ab_stage == 1 and ab_stage_choices:
-                    first_choice = ab_stage_choices[0].replace("_", " ")
-                    st.success(t("tab2_ab_first_winner", choice=first_choice))
-                elif ab_stage and ab_stage >= 2:
-                    if ab_stage_choices:
-                        first_choice = ab_stage_choices[0].replace("_", " ")
+                stage = current_state.get("ab_stage", 0)
+                stage_choices = current_state.get("ab_stage_choices", [])
+                finalists = current_state.get("ab_final_options", [])
+
+                _ensure_ab_stage_started(current_state)
+                mode_sessions[current_mode] = current_state
+                st.session_state["mode_sessions"] = mode_sessions
+
+                if stage == 0:
+                    st.info(t("tab2_ab_step_one"))
+                elif stage == 1:
+                    if stage_choices:
+                        first_choice = stage_choices[0].replace("_", " ")
                         st.success(t("tab2_ab_first_winner", choice=first_choice))
-                    if len(ab_stage_choices) >= 2:
-                        second_choice = ab_stage_choices[1].replace("_", " ")
+                    st.info(t("tab2_ab_step_two"))
+                else:
+                    if stage_choices:
+                        first_choice = stage_choices[0].replace("_", " ")
+                        st.success(t("tab2_ab_first_winner", choice=first_choice))
+                    if len(stage_choices) >= 2:
+                        second_choice = stage_choices[1].replace("_", " ")
                         st.success(t("tab2_ab_second_winner", choice=second_choice))
-                    if len(ab_finalists) == 2:
-                        first_finalist = ab_finalists[0].replace("_", " ")
-                        second_finalist = ab_finalists[1].replace("_", " ")
-                        st.caption(
+                    if len(finalists) == 2:
+                        first_finalist = finalists[0].replace("_", " ")
+                        second_finalist = finalists[1].replace("_", " ")
+                        st.info(
                             t(
                                 "tab2_ab_finalists",
                                 first=first_finalist,
                                 second=second_finalist,
                             )
                         )
+                    if not current_state.get("selected"):
+                        st.info(t("tab2_ab_step_three"))
 
                 display_indexes = _get_ab_display_indexes(current_state)
                 if len(display_indexes) != 2:
@@ -1472,7 +1460,7 @@ with tab2:
                                 st.caption(t("tab2_selected_label"))
                             if st.button(
                                 t("tab2_choose_product"),
-                                key=f"choose_{current_mode}_{ab_stage or 0}_{idx}",
+                                key=f"choose_{current_mode}_{stage}_{idx}",
                             ):
                                 _handle_mode_selection(
                                     current_mode, image_path.stem, usuario_activo
