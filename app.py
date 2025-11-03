@@ -1086,6 +1086,12 @@ def _initialize_pupil_session_state() -> None:
         st.session_state["pupil_metrics_lock"] = threading.Lock()
     if "pupil_metrics_placeholder" not in st.session_state:
         st.session_state["pupil_metrics_placeholder"] = None
+    if "pupil_last_attempt" not in st.session_state:
+        st.session_state["pupil_last_attempt"] = None
+    if "pupil_last_error" not in st.session_state:
+        st.session_state["pupil_last_error"] = None
+    if "pupil_last_status" not in st.session_state:
+        st.session_state["pupil_last_status"] = "idle"
 
 
 def _stop_pupil_capture() -> None:
@@ -1109,6 +1115,7 @@ def _stop_pupil_capture() -> None:
     st.session_state["pupil_thread"] = None
     st.session_state["pupil_thread_stop"] = None
     st.session_state["pupil_capturing"] = False
+    st.session_state["pupil_last_status"] = "stopped"
 
 
 def _append_pupil_metric(gaze_data: dict) -> None:
@@ -1842,21 +1849,54 @@ with tab3:
     st.session_state["pupil_metrics_placeholder"] = metrics_placeholder
 
     if start_capture:
+        st.session_state["pupil_last_attempt"] = {
+            "endpoint": endpoint,
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+        }
+        st.session_state["pupil_last_error"] = None
+        st.session_state["pupil_last_status"] = "connecting"
         if st.session_state.get("pupil_capturing"):
             _stop_pupil_capture()
         if not _start_pupil_capture(endpoint):
             _stop_pupil_capture()
-            st.warning(
-                "⚠️ No se pudo conectar a Pupil Service. Verifica que Pupil Capture esté activo o usa modo local."
+            st.session_state["pupil_last_status"] = "error"
+            st.session_state["pupil_last_error"] = (
+                "Sin datos: no hubo respuesta de Pupil Service en el endpoint seleccionado."
             )
+            st.warning(
+                "⚠️ No se pudo conectar a Pupil Service. Verifica que Pupil Capture esté activo, que el puerto 50020 esté abierto y que usas el modo correcto."
+            )
+        else:
+            st.session_state["pupil_last_status"] = "capturing"
 
     if stop_capture:
         _stop_pupil_capture()
+        st.session_state["pupil_last_error"] = None
 
     if st.session_state.get("pupil_capturing"):
         st.success(f"Recibiendo métricas desde tcp://{endpoint}")
     else:
-        st.info("Captura detenida. Usa el botón de iniciar para reconectar.")
+        last_attempt = st.session_state.get("pupil_last_attempt")
+        base_message = "Captura detenida. Usa el botón de iniciar para reconectar."
+        if last_attempt:
+            base_message = (
+                f"Captura detenida. Último intento: tcp://{last_attempt['endpoint']} a las {last_attempt['timestamp']}."
+            )
+        st.info(base_message)
+        last_error = st.session_state.get("pupil_last_error")
+        if last_error:
+            st.warning(
+                f"{last_error} Revisa que Pupil Capture esté corriendo y conectado a la misma red."
+            )
+        st.markdown(
+            """
+            **Para ver métricas aquí:**
+
+            1. Abre Pupil Capture/Pupil Service y asegúrate de que el stream esté activo.
+            2. Comprueba que la dirección seleccionada coincide con la máquina que emite los datos.
+            3. Pulsa **Iniciar captura** y espera a que lleguen paquetes en el tópico `gaze.3d.01`.
+            """
+        )
 
     with controls_col3:
         metrics_available = bool(st.session_state.get("pupil_metrics"))
@@ -1911,4 +1951,6 @@ with tab3:
             ]
             metrics_placeholder.dataframe(df_recent[display_columns])
         else:
-            metrics_placeholder.info("Aún no hay métricas registradas.")
+            metrics_placeholder.info(
+                "Aún no hay métricas registradas. Inicia la captura y verifica que el stream de Pupil Service envíe datos."
+            )
