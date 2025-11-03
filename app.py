@@ -1517,6 +1517,8 @@ with tab2:
     if names_error:
         st.warning(names_error)
 
+    tab2_can_continue = True
+
     if (
         st.session_state.get("tab2_authenticated", False)
         and st.session_state.get("tab2_user_name") not in registered_names
@@ -1527,9 +1529,9 @@ with tab2:
 
     if not registered_names:
         st.info(t("tab2_requires_response_info"))
-        st.stop()
+        tab2_can_continue = False
 
-    if not st.session_state.get("tab2_authenticated", False):
+    if tab2_can_continue and not st.session_state.get("tab2_authenticated", False):
         with st.form("tab2_login_form"):
             selected_name = st.selectbox(
                 t("tab2_select_name_prompt"),
@@ -1542,269 +1544,276 @@ with tab2:
             st.session_state["tab2_user_name"] = selected_name
             _reset_visual_experiment_state()
 
-    if not st.session_state.get("tab2_authenticated", False):
+    if tab2_can_continue and not st.session_state.get("tab2_authenticated", False):
         st.info(t("tab2_choose_name_info"))
-        st.stop()
+        tab2_can_continue = False
 
-    usuario_activo = st.session_state.get("tab2_user_name", "")
-    st.success(t("tab2_logged_in_as", user=usuario_activo))
+    if tab2_can_continue:
+        usuario_activo = st.session_state.get("tab2_user_name", "")
+        st.success(t("tab2_logged_in_as", user=usuario_activo))
 
-    if st.button(t("tab2_switch_user"), key="tab2_logout"):
-        st.session_state["tab2_authenticated"] = False
-        st.session_state["tab2_user_name"] = ""
-        _reset_visual_experiment_state()
-        _trigger_streamlit_rerun()
-
-    sequence = st.session_state.get("mode_sequence", [])
-    if not sequence:
-        st.warning(t("tab2_no_modes_warning"))
-        st.stop()
-
-    for mode_option in sequence:
-        _ensure_mode_initialized(mode_option)
-
-    if st.session_state.get("experiment_completed"):
-        result_path = st.session_state.get("experiment_result_path", "")
-        result_df = st.session_state.get("experiment_result_df")
-        if result_path:
-            st.success(t("tab2_completed_with_path", path=result_path))
-        else:
-            st.success(t("tab2_completed"))
-
-        if isinstance(result_df, pd.DataFrame) and not result_df.empty:
-            st.dataframe(result_df)
-            download_name = (
-                Path(result_path).name
-                if result_path
-                else "resultados_experimento_visual.xlsx"
-            )
-            st.download_button(
-                t("tab2_download_results"),
-                data=_df_to_excel_bytes(result_df),
-                file_name=download_name,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
-        else:
-            st.info(t("tab2_no_data_info"))
-
-        if st.button(t("tab2_restart_experiment"), key="restart_experiment"):
+        if st.button(t("tab2_switch_user"), key="tab2_logout"):
+            st.session_state["tab2_authenticated"] = False
+            st.session_state["tab2_user_name"] = ""
             _reset_visual_experiment_state()
             _trigger_streamlit_rerun()
 
-        st.stop()
-
-    total_modes = len(sequence)
-    current_index = st.session_state.get("current_mode_index", 0)
-    current_index = max(0, min(current_index, total_modes - 1))
-    st.session_state["current_mode_index"] = current_index
-    current_mode = sequence[current_index]
-
-    _ensure_mode_started(current_mode)
-    mode_sessions = st.session_state.get("mode_sessions", {})
-    current_state = mode_sessions.get(current_mode, {})
-
-    images = current_state.get("images", [])
-
-    info_message = t(
-        "tab2_mode_info",
-        current=current_index + 1,
-        total=total_modes,
-        mode=current_mode,
-    )
-
-    ab_stage = current_state.get("ab_stage", 0)
-    ab_finalists = current_state.get("ab_final_options", [])
-    stage_messages = []
-
-    if current_mode == "A/B" and len(images) >= 4:
-        _ensure_ab_stage_started(current_state)
-        mode_sessions[current_mode] = current_state
-        st.session_state["mode_sessions"] = mode_sessions
-
-        ab_stage = current_state.get("ab_stage", ab_stage)
-        ab_finalists = current_state.get("ab_final_options", ab_finalists)
-
-        if ab_stage == 0:
-            stage_messages.append(t("tab2_ab_step_one"))
-        elif ab_stage == 1:
-            stage_messages.append(t("tab2_ab_step_two"))
-        else:
-            if len(ab_finalists) == 2:
-                first_finalist = ab_finalists[0].replace("_", " ")
-                second_finalist = ab_finalists[1].replace("_", " ")
-                stage_messages.append(
-                    t(
-                        "tab2_ab_finalists",
-                        first=first_finalist,
-                        second=second_finalist,
-                    )
-                )
-            if not current_state.get("selected"):
-                stage_messages.append(t("tab2_ab_step_three"))
-
-    if stage_messages:
-        info_message = f"{info_message}\n\n" + "\n".join(stage_messages)
-
-    st.info(info_message)
-
-    st.markdown(TAB2_IMAGE_STYLES, unsafe_allow_html=True)
-
-    if not images:
-        st.warning(t("tab2_no_images_warning"))
+        sequence = st.session_state.get("mode_sequence", [])
     else:
-        if current_mode == "A/B":
-            if len(images) < 4:
-                st.warning(t("tab2_need_four_images_ab"))
-            else:
-                display_indexes = _get_ab_display_indexes(current_state)
-                if len(display_indexes) != 2:
-                    st.warning(t("tab2_no_images_warning"))
-                else:
-                    columns = st.columns(2)
-                    for idx, (col, image_index) in enumerate(
-                        zip(columns, display_indexes)
-                    ):
-                        if not (0 <= image_index < len(images)):
-                            continue
-                        image_path = images[image_index]
-                        with col:
-                            _render_visual_image(image_path, current_mode)
-                            if current_state.get("selected") == image_path.stem:
-                                st.caption(t("tab2_selected_label"))
-                            if st.button(
-                                t("tab2_choose_product"),
-                                key=f"choose_{current_mode}_{ab_stage}_{idx}",
-                            ):
-                                _handle_mode_selection(
-                                    current_mode, image_path.stem, usuario_activo
-                                )
-                                st.session_state["last_selection_feedback"] = (
-                                    image_path.stem
-                                )
-                                _trigger_streamlit_rerun()
-        elif current_mode == "Grid":
-            if len(images) < 2:
-                st.warning(t("tab2_need_two_images_grid"))
-            else:
-                for start in range(0, len(images), 2):
-                    columns = st.columns(2)
-                    for offset, (col, image_path) in enumerate(
-                        zip(columns, images[start : start + 2])
-                    ):
-                        with col:
-                            _render_visual_image(image_path, current_mode)
-                            if current_state.get("selected") == image_path.stem:
-                                st.caption(t("tab2_selected_label"))
-                            if st.button(
-                                t("tab2_choose_product"),
-                                key=f"choose_{current_mode}_{start + offset}",
-                            ):
-                                _handle_mode_selection(
-                                    current_mode, image_path.stem, usuario_activo
-                                )
-                                st.session_state["last_selection_feedback"] = image_path.stem
-                                _trigger_streamlit_rerun()
-        else:
-            total_images = len(images)
-            index = current_state.get("navigation_index", 0)
-            index = max(0, min(index, total_images - 1))
-            if index != current_state.get("navigation_index"):
-                current_state["navigation_index"] = index
-                mode_sessions[current_mode] = current_state
-                st.session_state["mode_sessions"] = mode_sessions
+        usuario_activo = ""
+        sequence = []
 
-            current_image = images[index]
-            current_state = _ensure_seq_view_state(current_state, current_image)
+    if tab2_can_continue and not sequence:
+        st.warning(t("tab2_no_modes_warning"))
+        tab2_can_continue = False
+
+    if tab2_can_continue:
+        for mode_option in sequence:
+            _ensure_mode_initialized(mode_option)
+
+        if st.session_state.get("experiment_completed"):
+            result_path = st.session_state.get("experiment_result_path", "")
+            result_df = st.session_state.get("experiment_result_df")
+            if result_path:
+                st.success(t("tab2_completed_with_path", path=result_path))
+            else:
+                st.success(t("tab2_completed"))
+
+            if isinstance(result_df, pd.DataFrame) and not result_df.empty:
+                st.dataframe(result_df)
+                download_name = (
+                    Path(result_path).name
+                    if result_path
+                    else "resultados_experimento_visual.xlsx"
+                )
+                st.download_button(
+                    t("tab2_download_results"),
+                    data=_df_to_excel_bytes(result_df),
+                    file_name=download_name,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            else:
+                st.info(t("tab2_no_data_info"))
+
+            if st.button(t("tab2_restart_experiment"), key="restart_experiment"):
+                _reset_visual_experiment_state()
+                _trigger_streamlit_rerun()
+
+            tab2_can_continue = False
+
+    if tab2_can_continue:
+        total_modes = len(sequence)
+        current_index = st.session_state.get("current_mode_index", 0)
+        current_index = max(0, min(current_index, total_modes - 1))
+        st.session_state["current_mode_index"] = current_index
+        current_mode = sequence[current_index]
+
+        _ensure_mode_started(current_mode)
+        mode_sessions = st.session_state.get("mode_sessions", {})
+        current_state = mode_sessions.get(current_mode, {})
+
+        images = current_state.get("images", [])
+
+        info_message = t(
+            "tab2_mode_info",
+            current=current_index + 1,
+            total=total_modes,
+            mode=current_mode,
+        )
+
+        ab_stage = current_state.get("ab_stage", 0)
+        ab_finalists = current_state.get("ab_final_options", [])
+        stage_messages = []
+
+        if current_mode == "A/B" and len(images) >= 4:
+            _ensure_ab_stage_started(current_state)
             mode_sessions[current_mode] = current_state
             st.session_state["mode_sessions"] = mode_sessions
 
-            _render_visual_image(current_image, current_mode)
+            ab_stage = current_state.get("ab_stage", ab_stage)
+            ab_finalists = current_state.get("ab_final_options", ab_finalists)
 
-            prev_clicked = False
-            choose_clicked = False
-            next_clicked = False
+            if ab_stage == 0:
+                stage_messages.append(t("tab2_ab_step_one"))
+            elif ab_stage == 1:
+                stage_messages.append(t("tab2_ab_step_two"))
+            else:
+                if len(ab_finalists) == 2:
+                    first_finalist = ab_finalists[0].replace("_", " ")
+                    second_finalist = ab_finalists[1].replace("_", " ")
+                    stage_messages.append(
+                        t(
+                            "tab2_ab_finalists",
+                            first=first_finalist,
+                            second=second_finalist,
+                        )
+                    )
+                if not current_state.get("selected"):
+                    stage_messages.append(t("tab2_ab_step_three"))
 
-            button_columns = st.columns([1, 1, 1], gap="small")
+        if stage_messages:
+            info_message = f"{info_message}\n\n" + "\n".join(stage_messages)
 
-            with button_columns[0]:
-                prev_clicked = st.button(
-                    t("tab2_prev_product"),
-                    key=f"prev_{current_mode}",
-                    disabled=index <= 0,
-                    use_container_width=True,
-                )
+        st.info(info_message)
 
-            with button_columns[1]:
-                choose_clicked = st.button(
-                    t("tab2_choose_product"),
-                    key=f"choose_{current_mode}_{index}",
-                    use_container_width=True,
-                )
+        st.markdown(TAB2_IMAGE_STYLES, unsafe_allow_html=True)
 
-            with button_columns[2]:
-                next_clicked = st.button(
-                    t("tab2_next_product"),
-                    key=f"next_{current_mode}",
-                    disabled=index >= total_images - 1,
-                    use_container_width=True,
-                )
+        if not images:
+            st.warning(t("tab2_no_images_warning"))
+        else:
+            if current_mode == "A/B":
+                if len(images) < 4:
+                    st.warning(t("tab2_need_four_images_ab"))
+                else:
+                    display_indexes = _get_ab_display_indexes(current_state)
+                    if len(display_indexes) != 2:
+                        st.warning(t("tab2_no_images_warning"))
+                    else:
+                        columns = st.columns(2)
+                        for idx, (col, image_index) in enumerate(
+                            zip(columns, display_indexes)
+                        ):
+                            if not (0 <= image_index < len(images)):
+                                continue
+                            image_path = images[image_index]
+                            with col:
+                                _render_visual_image(image_path, current_mode)
+                                if current_state.get("selected") == image_path.stem:
+                                    st.caption(t("tab2_selected_label"))
+                                if st.button(
+                                    t("tab2_choose_product"),
+                                    key=f"choose_{current_mode}_{ab_stage}_{idx}",
+                                ):
+                                    _handle_mode_selection(
+                                        current_mode, image_path.stem, usuario_activo
+                                    )
+                                    st.session_state["last_selection_feedback"] = (
+                                        image_path.stem
+                                    )
+                                    _trigger_streamlit_rerun()
+            elif current_mode == "Grid":
+                if len(images) < 2:
+                    st.warning(t("tab2_need_two_images_grid"))
+                else:
+                    for start in range(0, len(images), 2):
+                        columns = st.columns(2)
+                        for offset, (col, image_path) in enumerate(
+                            zip(columns, images[start : start + 2])
+                        ):
+                            with col:
+                                _render_visual_image(image_path, current_mode)
+                                if current_state.get("selected") == image_path.stem:
+                                    st.caption(t("tab2_selected_label"))
+                                if st.button(
+                                    t("tab2_choose_product"),
+                                    key=f"choose_{current_mode}_{start + offset}",
+                                ):
+                                    _handle_mode_selection(
+                                        current_mode, image_path.stem, usuario_activo
+                                    )
+                                    st.session_state["last_selection_feedback"] = image_path.stem
+                                    _trigger_streamlit_rerun()
+            else:
+                total_images = len(images)
+                index = current_state.get("navigation_index", 0)
+                index = max(0, min(index, total_images - 1))
+                if index != current_state.get("navigation_index"):
+                    current_state["navigation_index"] = index
+                    mode_sessions[current_mode] = current_state
+                    st.session_state["mode_sessions"] = mode_sessions
 
-            if current_state.get("selected") == current_image.stem:
+                current_image = images[index]
+                current_state = _ensure_seq_view_state(current_state, current_image)
+                mode_sessions[current_mode] = current_state
+                st.session_state["mode_sessions"] = mode_sessions
+
+                _render_visual_image(current_image, current_mode)
+
+                prev_clicked = False
+                choose_clicked = False
+                next_clicked = False
+
+                button_columns = st.columns([1, 1, 1], gap="small")
+
+                with button_columns[0]:
+                    prev_clicked = st.button(
+                        t("tab2_prev_product"),
+                        key=f"prev_{current_mode}",
+                        disabled=index <= 0,
+                        use_container_width=True,
+                    )
+
+                with button_columns[1]:
+                    choose_clicked = st.button(
+                        t("tab2_choose_product"),
+                        key=f"choose_{current_mode}_{index}",
+                        use_container_width=True,
+                    )
+
+                with button_columns[2]:
+                    next_clicked = st.button(
+                        t("tab2_next_product"),
+                        key=f"next_{current_mode}",
+                        disabled=index >= total_images - 1,
+                        use_container_width=True,
+                    )
+
+                if current_state.get("selected") == current_image.stem:
+                    st.markdown(
+                        f"<p class='seq-selection-label'>{html.escape(t('tab2_selected_label'))}</p>",
+                        unsafe_allow_html=True,
+                    )
+
                 st.markdown(
-                    f"<p class='seq-selection-label'>{html.escape(t('tab2_selected_label'))}</p>",
+                    f"<p class='seq-product-position'>{html.escape(t('tab2_product_position', current=index + 1, total=total_images))}</p>",
                     unsafe_allow_html=True,
                 )
 
-            st.markdown(
-                f"<p class='seq-product-position'>{html.escape(t('tab2_product_position', current=index + 1, total=total_images))}</p>",
-                unsafe_allow_html=True,
-            )
+                if prev_clicked:
+                    new_index = max(0, index - 1)
+                    _record_seq_navigation(current_state, new_index, "prev")
+                    mode_sessions[current_mode] = current_state
+                    st.session_state["mode_sessions"] = mode_sessions
+                    _trigger_streamlit_rerun()
 
-            if prev_clicked:
-                new_index = max(0, index - 1)
-                _record_seq_navigation(current_state, new_index, "prev")
-                mode_sessions[current_mode] = current_state
-                st.session_state["mode_sessions"] = mode_sessions
+                if choose_clicked:
+                    _handle_mode_selection(current_mode, current_image.stem, usuario_activo)
+                    mode_sessions = st.session_state.get("mode_sessions", {})
+                    current_state = mode_sessions.get(current_mode, current_state)
+                    current_state["navigation_index"] = index
+                    mode_sessions[current_mode] = current_state
+                    st.session_state["mode_sessions"] = mode_sessions
+                    st.session_state["last_selection_feedback"] = current_image.stem
+                    _trigger_streamlit_rerun()
+
+                if next_clicked:
+                    new_index = min(total_images - 1, index + 1)
+                    _record_seq_navigation(current_state, new_index, "next")
+                    mode_sessions[current_mode] = current_state
+                    st.session_state["mode_sessions"] = mode_sessions
+                    _trigger_streamlit_rerun()
+
+        selection_made = bool(current_state.get("selected"))
+        is_last_mode = current_index == total_modes - 1
+
+        if not selection_made:
+            st.info(t("tab2_select_to_continue"))
+
+        if not is_last_mode:
+            if st.button(
+                t("tab2_next_mode"),
+                key=f"next_mode_{current_mode}",
+                disabled=not selection_made,
+            ):
+                _advance_visual_mode()
+        else:
+            if st.button(
+                t("tab2_finish_experiment"),
+                key="finish_experiment",
+                disabled=not selection_made,
+            ):
+                _complete_visual_experiment(usuario_activo)
                 _trigger_streamlit_rerun()
-
-            if choose_clicked:
-                _handle_mode_selection(current_mode, current_image.stem, usuario_activo)
-                mode_sessions = st.session_state.get("mode_sessions", {})
-                current_state = mode_sessions.get(current_mode, current_state)
-                current_state["navigation_index"] = index
-                mode_sessions[current_mode] = current_state
-                st.session_state["mode_sessions"] = mode_sessions
-                st.session_state["last_selection_feedback"] = current_image.stem
-                _trigger_streamlit_rerun()
-
-            if next_clicked:
-                new_index = min(total_images - 1, index + 1)
-                _record_seq_navigation(current_state, new_index, "next")
-                mode_sessions[current_mode] = current_state
-                st.session_state["mode_sessions"] = mode_sessions
-                _trigger_streamlit_rerun()
-
-    selection_made = bool(current_state.get("selected"))
-    is_last_mode = current_index == total_modes - 1
-
-    if not selection_made:
-        st.info(t("tab2_select_to_continue"))
-
-    if not is_last_mode:
-        if st.button(
-            t("tab2_next_mode"),
-            key=f"next_mode_{current_mode}",
-            disabled=not selection_made,
-        ):
-            _advance_visual_mode()
-    else:
-        if st.button(
-            t("tab2_finish_experiment"),
-            key="finish_experiment",
-            disabled=not selection_made,
-        ):
-            _complete_visual_experiment(usuario_activo)
-            _trigger_streamlit_rerun()
 
 with tab3:
     _initialize_pupil_session_state()
