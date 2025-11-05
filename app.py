@@ -1874,13 +1874,11 @@ with tab2:
                         for i in display_indexes
                         if 0 <= i < len(images)
                     ]
-                    if images:
+                    if valid_paths:
                         best_entry = _select_highest_smartscore_product(
-                            images, smartscore_map
+                            valid_paths, smartscore_map
                         )
-                        if best_entry and any(
-                            path.stem == best_entry[0] for path in valid_paths
-                        ):
+                        if best_entry:
                             highlighted_product = best_entry[0]
                     if len(display_indexes) != 2:
                         st.warning(t("tab2_no_images_warning"))
