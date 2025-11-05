@@ -6,6 +6,7 @@ import base64
 import html
 import threading
 import time
+import traceback
 from io import BytesIO
 from datetime import datetime
 from pathlib import Path
@@ -1092,6 +1093,10 @@ def _initialize_pupil_session_state() -> None:
         st.session_state["pupil_last_error"] = None
     if "pupil_last_status" not in st.session_state:
         st.session_state["pupil_last_status"] = "idle"
+    if "pupil_debug" not in st.session_state:
+        st.session_state["pupil_debug"] = {}
+    if "pupil_debug_lock" not in st.session_state:
+        st.session_state["pupil_debug_lock"] = threading.Lock()
 
 
 def _stop_pupil_capture() -> None:
@@ -1116,6 +1121,11 @@ def _stop_pupil_capture() -> None:
     st.session_state["pupil_thread_stop"] = None
     st.session_state["pupil_capturing"] = False
     st.session_state["pupil_last_status"] = "stopped"
+    debug_info = st.session_state.get("pupil_debug", {})
+    debug_lock: threading.Lock = st.session_state.get("pupil_debug_lock")
+    if debug_lock is not None:
+        with debug_lock:
+            debug_info["status"] = "stopped"
 
 
 def _append_pupil_metric(gaze_data: dict) -> None:
@@ -1159,6 +1169,11 @@ def _append_pupil_metric(gaze_data: dict) -> None:
 
 
 def _pupil_listener_thread(stop_event: threading.Event, socket: zmq.Socket) -> None:
+    debug_info = st.session_state.setdefault("pupil_debug", {})
+    metrics_lock: threading.Lock = st.session_state["pupil_metrics_lock"]
+    debug_lock: threading.Lock = st.session_state.setdefault(
+        "pupil_debug_lock", threading.Lock()
+    )
     while not stop_event.is_set():
         try:
             while True:
@@ -1166,19 +1181,46 @@ def _pupil_listener_thread(stop_event: threading.Event, socket: zmq.Socket) -> N
                     frames = socket.recv_multipart(flags=zmq.NOBLOCK)
                 except zmq.Again:
                     break
+                topic = frames[0] if frames else b""
                 gaze_payload = frames[-1] if frames else b""
+                topic_text = ""
+                try:
+                    topic_text = topic.decode("utf-8", errors="ignore")
+                except Exception:
+                    topic_text = repr(topic)
+                payload_preview = gaze_payload[:64]
+                payload_preview_display = base64.b16encode(payload_preview).decode(
+                    "ascii", errors="ignore"
+                )
+                print(
+                    f"[Pupil] Tópico recibido: {topic_text or '(vacío)'} | bytes={len(gaze_payload)}"
+                )
+                with debug_lock:
+                    debug_info["last_topic"] = topic_text or "(sin tópico)"
+                    debug_info["last_payload_preview_hex"] = payload_preview_display
                 try:
                     gaze_data = msgpack.loads(gaze_payload, raw=False)
                 except Exception:
                     gaze_data = {}
+                    print("[Pupil] Error decodificando payload MsgPack")
+                    traceback.print_exc()
                 if isinstance(gaze_data, dict):
                     _append_pupil_metric(gaze_data)
+                    with debug_lock:
+                        debug_info["last_gaze_sample"] = {
+                            "timestamp": gaze_data.get("timestamp"),
+                            "confidence": gaze_data.get("confidence"),
+                            "norm_pos": gaze_data.get("norm_pos"),
+                        }
         except zmq.ZMQError:
+            print("[Pupil] Error en el listener de Pupil")
+            traceback.print_exc()
+            with debug_lock:
+                debug_info["last_error"] = "Listener recibió un ZMQError"
             stop_event.set()
 
         placeholder = st.session_state.get("pupil_metrics_placeholder")
-        lock: threading.Lock = st.session_state["pupil_metrics_lock"]
-        with lock:
+        with metrics_lock:
             recent_metrics = st.session_state["pupil_metrics"][-10:]
 
         if placeholder is not None:
@@ -1211,45 +1253,114 @@ def _start_pupil_capture(endpoint: str) -> bool:
     if ":" in endpoint:
         host, port = endpoint.split(":", 1)
 
-    context = zmq.Context.instance()
-    req_socket = context.socket(zmq.REQ)
-    req_socket.setsockopt(zmq.LINGER, 0)
-    req_socket.setsockopt(zmq.RCVTIMEO, 2000)
-    req_socket.setsockopt(zmq.SNDTIMEO, 2000)
+    debug_lock: threading.Lock = st.session_state.setdefault(
+        "pupil_debug_lock", threading.Lock()
+    )
+    debug_info = st.session_state.setdefault("pupil_debug", {})
+    with debug_lock:
+        debug_info.clear()
+        debug_info.update(
+            {
+                "status": "connecting",
+                "endpoint": f"tcp://{host}:{port}",
+                "topic": PUPIL_TOPIC,
+                "attempts": [],
+            }
+        )
+    print(
+        f"[Pupil] Intentando conexión REQ a tcp://{host}:{port} para solicitar SUB_PORT"
+    )
 
-    try:
-        req_socket.connect(f"tcp://{host}:{port}")
-        req_socket.send_string("SUB_PORT")
-        sub_port = req_socket.recv_string()
-    except zmq.ZMQError:
+    context = zmq.Context.instance()
+    sub_port: Optional[str] = None
+    last_exception: Optional[Exception] = None
+    for attempt in range(1, 4):
+        print(f"[Pupil] Solicitud SUB_PORT intento {attempt}")
+        with debug_lock:
+            debug_info["attempts"].append({"step": "SUB_PORT", "attempt": attempt})
+        req_socket = context.socket(zmq.REQ)
+        req_socket.setsockopt(zmq.LINGER, 0)
+        req_socket.setsockopt(zmq.RCVTIMEO, 2000)
+        req_socket.setsockopt(zmq.SNDTIMEO, 2000)
         try:
-            req_socket.close(0)
-        except zmq.ZMQError:
-            pass
+            req_socket.connect(f"tcp://{host}:{port}")
+            req_socket.send_string("SUB_PORT")
+            sub_port = req_socket.recv_string()
+            print(f"[Pupil] SUB_PORT recibido: {sub_port}")
+            with debug_lock:
+                if debug_info["attempts"]:
+                    debug_info["attempts"][-1]["status"] = "ok"
+                    debug_info["attempts"][-1]["sub_port"] = sub_port
+            break
+        except zmq.ZMQError as exc:
+            last_exception = exc
+            print("[Pupil] Error solicitando SUB_PORT")
+            traceback.print_exc()
+            with debug_lock:
+                debug_info["last_error"] = f"Error solicitando SUB_PORT: {exc}"
+                if debug_info["attempts"]:
+                    debug_info["attempts"][-1]["status"] = "error"
+                    debug_info["attempts"][-1]["exception"] = str(exc)
+        finally:
+            try:
+                req_socket.close(0)
+            except zmq.ZMQError:
+                pass
+
+    if sub_port is None:
+        st.session_state["pupil_last_error"] = (
+            "No se pudo obtener el SUB_PORT desde Pupil Service."
+        )
+        if last_exception is not None:
+            with debug_lock:
+                debug_info["last_exception_type"] = type(last_exception).__name__
+                debug_info["last_exception_message"] = str(last_exception)
         return False
-    finally:
-        try:
-            req_socket.close(0)
-        except zmq.ZMQError:
-            pass
+
+    if not sub_port.isdigit():
+        print(f"[Pupil] SUB_PORT inválido recibido: {sub_port}")
+        with debug_lock:
+            debug_info["last_error"] = f"SUB_PORT inválido: {sub_port}"
+        st.session_state["pupil_last_error"] = (
+            "SUB_PORT inválido recibido desde Pupil Service."
+        )
+        return False
 
     sub_socket = context.socket(zmq.SUB)
     sub_socket.setsockopt(zmq.LINGER, 0)
     sub_socket.setsockopt_string(zmq.SUBSCRIBE, PUPIL_TOPIC)
 
     try:
+        with debug_lock:
+            debug_info["sub_port"] = sub_port
+            debug_info["sub_endpoint"] = f"tcp://{host}:{sub_port}"
+        print(
+            f"[Pupil] Conectando socket SUB a tcp://{host}:{sub_port} (tópico {PUPIL_TOPIC})"
+        )
         sub_socket.connect(f"tcp://{host}:{sub_port}")
-    except zmq.ZMQError:
+    except zmq.ZMQError as exc:
+        print("[Pupil] Error conectando socket SUB")
+        traceback.print_exc()
         try:
             sub_socket.close(0)
         except zmq.ZMQError:
             pass
+        with debug_lock:
+            debug_info["last_error"] = f"Error conectando SUB: {exc}"
+        st.session_state["pupil_last_error"] = (
+            "No se pudo conectar al puerto de suscripción de Pupil Service."
+        )
         return False
 
     st.session_state["pupil_socket"] = sub_socket
     st.session_state["pupil_capturing"] = True
     st.session_state["pupil_start_time"] = datetime.now()
     st.session_state["pupil_metrics"] = []
+    st.session_state["pupil_last_error"] = None
+    with debug_lock:
+        debug_info["status"] = "listening"
+        debug_info.pop("last_error", None)
+        debug_info["connected_at"] = datetime.now().isoformat(timespec="seconds")
 
     stop_event = threading.Event()
     st.session_state["pupil_thread_stop"] = stop_event
@@ -1905,6 +2016,19 @@ with tab3:
             3. Pulsa **Iniciar captura** y espera a que lleguen paquetes en el tópico `gaze.3d.01`.
             """
         )
+
+    debug_info = st.session_state.get("pupil_debug", {})
+    debug_lock = st.session_state.get("pupil_debug_lock")
+    debug_snapshot = {}
+    if debug_info:
+        if debug_lock is not None:
+            with debug_lock:
+                debug_snapshot = json.loads(json.dumps(debug_info, default=str))
+        else:
+            debug_snapshot = json.loads(json.dumps(debug_info, default=str))
+    if debug_snapshot:
+        st.subheader("🔍 Diagnóstico en vivo")
+        st.json(debug_snapshot)
 
     with controls_col3:
         metrics_available = bool(st.session_state.get("pupil_metrics"))
