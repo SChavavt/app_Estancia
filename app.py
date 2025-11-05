@@ -193,6 +193,9 @@ DATA_FILES = {
 }
 
 RESULTS_PATH_IN_REPO = "Resultados_SmartScore.xlsx"  # se crea/actualiza vía API de GitHub
+SMARTSCORE_RESULTS_PATH = Path(RESULTS_PATH_IN_REPO)
+SMARTSCORE_CATEGORIES = ["Instant Noodles", "Mac & Cheese", "Ready to Eat"]
+SMARTSCORE_RANKS = (1, 2, 3)
 
 INITIAL_FORM_VALUES = {
     "nombre_completo": "",
@@ -229,6 +232,8 @@ st.session_state.setdefault("_reset_form_requested", False)
 st.session_state.setdefault("visual_log", [])
 st.session_state.setdefault("tab2_authenticated", False)
 st.session_state.setdefault("tab2_user_name", "")
+st.session_state.setdefault("tab2_smartscore_map", {})
+st.session_state.setdefault("tab2_smartscore_error", "")
 
 VISUAL_MODE_OPTIONS = ["A/B", "Grid", "Sequential"]
 VISUAL_SUBFOLDERS = {"A/B": "A_B", "Grid": "Grid", "Sequential": "Sequential"}
@@ -259,6 +264,18 @@ TAB2_IMAGE_STYLES = """
     text-align: center;
     margin: 0;
     color: inherit;
+}
+
+.smartscore-label {
+    background-color: rgba(30, 144, 255, 0.15);
+    color: #004080;
+    font-size: 0.85rem;
+    font-weight: 600;
+    border-radius: 6px;
+    padding: 3px 8px;
+    margin: 0;
+    margin-top: 4px;
+    text-align: center;
 }
 
 .tab2-image-container.ab img,
@@ -338,6 +355,74 @@ def _extract_minutes(s: str) -> float:
         return 0.0
     m = re.search(r"(\d+)", s_low)
     return float(m.group(1)) if m else 0.0
+
+
+def _normalize_product_name(name: str) -> str:
+    if not isinstance(name, str):
+        return ""
+    return re.sub(r"[^a-z0-9]+", "", name.casefold())
+
+
+def _load_user_smartscore_map(user_name: str) -> tuple[dict[str, float], str]:
+    if not user_name:
+        return {}, ""
+
+    path = SMARTSCORE_RESULTS_PATH
+    if not path.exists():
+        return {}, f"El archivo '{path}' no está disponible aún."
+
+    try:
+        df = pd.read_excel(path)
+    except Exception as error:
+        return {}, f"No se pudo leer '{path}': {error}"
+
+    if "Nombre Completo" not in df.columns:
+        return {}, f"El archivo '{path}' no contiene la columna 'Nombre Completo'."
+
+    name_series = df["Nombre Completo"].astype(str).str.strip()
+    matches = df.loc[name_series == user_name]
+    if matches.empty:
+        return {}, ""
+
+    row = matches.iloc[-1]
+    mapping: dict[str, float] = {}
+
+    for category in SMARTSCORE_CATEGORIES:
+        for rank in SMARTSCORE_RANKS:
+            product_col = f"{category} · Top {rank} · Producto"
+            score_col = f"{category} · Top {rank} · SmartScore"
+            if product_col not in df.columns or score_col not in df.columns:
+                continue
+
+            product = row.get(product_col)
+            score = row.get(score_col)
+
+            if not isinstance(product, str):
+                continue
+
+            product_name = product.strip()
+            if not product_name:
+                continue
+
+            if pd.isna(score):
+                continue
+
+            try:
+                score_value = float(score)
+            except (TypeError, ValueError):
+                continue
+
+            normalized_key = _normalize_product_name(product_name)
+            if normalized_key:
+                mapping[normalized_key] = score_value
+
+    return mapping, ""
+
+
+def _update_tab2_smartscore_map(user_name: str) -> None:
+    mapping, error = _load_user_smartscore_map(user_name)
+    st.session_state["tab2_smartscore_map"] = mapping
+    st.session_state["tab2_smartscore_error"] = error
 
 
 def _to_bool_natural(x) -> int:
@@ -520,6 +605,8 @@ def _reset_visual_experiment_state() -> None:
     st.session_state["experiment_result_path"] = ""
     st.session_state["experiment_result_df"] = pd.DataFrame()
     st.session_state["last_selection_feedback"] = ""
+    st.session_state["tab2_smartscore_map"] = {}
+    st.session_state["tab2_smartscore_error"] = ""
 
 
 def _ensure_mode_initialized(mode: str) -> None:
@@ -964,12 +1051,24 @@ def _render_visual_image(image_path: Path, mode: str) -> None:
     extension = image_path.suffix.lower().lstrip(".") or "png"
     if extension == "jpg":
         extension = "jpeg"
-    caption = html.escape(image_path.stem.replace("_", " "))
+    raw_caption = image_path.stem.replace("_", " ")
+    caption = html.escape(raw_caption)
+    smartscore_map: dict[str, float] = st.session_state.get("tab2_smartscore_map", {})
+    score_value = smartscore_map.get(_normalize_product_name(raw_caption))
+    if score_value is None:
+        score_value = smartscore_map.get(_normalize_product_name(image_path.stem))
+    if score_value is not None:
+        label_html = (
+            f"<div class=\"smartscore-label\">⭐ SmartScore recomendado: {score_value:.3f}</div>"
+        )
+    else:
+        label_html = ""
     st.markdown(
         f"""
         <div class="tab2-image-container {mode_class}">
             <img src="data:image/{extension};base64,{encoded}" alt="{caption}" />
             <p class="tab2-image-caption">{caption}</p>
+            {label_html}
         </div>
         """,
         unsafe_allow_html=True,
@@ -1661,7 +1760,11 @@ with tab2:
 
     if tab2_can_continue:
         usuario_activo = st.session_state.get("tab2_user_name", "")
+        _update_tab2_smartscore_map(usuario_activo)
+        smartscore_error = st.session_state.get("tab2_smartscore_error")
         st.success(t("tab2_logged_in_as", user=usuario_activo))
+        if smartscore_error:
+            st.warning(smartscore_error)
 
         if st.button(t("tab2_switch_user"), key="tab2_logout"):
             st.session_state["tab2_authenticated"] = False
