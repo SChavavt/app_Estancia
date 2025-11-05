@@ -314,17 +314,27 @@ TAB2_IMAGE_STYLES = """
 }
 
 .smartscore-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin-top: 6px;
+}
+
+.smartscore-label .smartscore-text {
     background: linear-gradient(135deg, rgba(255, 215, 0, 0.95), rgba(255, 165, 0, 0.95));
     color: #1f1400;
     font-size: 0.9rem;
     font-weight: 700;
-    border-radius: 8px;
-    padding: 6px 10px;
-    margin-top: 6px;
-    text-align: center;
+    border-radius: 6px;
+    padding: 4px 8px;
     border: 1px solid rgba(255, 255, 255, 0.35);
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
     display: inline-block;
+}
+
+.smartscore-label .smartscore-star {
+    font-size: 1rem;
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.25));
 }
 
 @media (max-width: 1200px) {
@@ -1121,7 +1131,10 @@ def _render_visual_image(image_path: Path, mode: str) -> None:
     if smartscore_entry:
         _, score_value = smartscore_entry
         smartscore_html = (
-            f"<div class=\"smartscore-label\">⭐ SmartScore recomendado: {score_value:.3f}</div>"
+            "<div class=\"smartscore-label\">"
+            "<span class=\"smartscore-star\" aria-hidden=\"true\">⭐</span>"
+            f"<span class=\"smartscore-text\">SmartScore recomendado: {score_value:.3f}</span>"
+            "</div>"
         )
     st.markdown(
         f"""
