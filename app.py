@@ -85,6 +85,7 @@ LANGUAGE_CONTENT = {
         "tab2_ab_step_two": "Step 2 of 3: Choose your favorite from the second pair.",
         "tab2_ab_step_three": "Final step: Choose your favorite between the two finalists.",
         "tab2_ab_finalists": "Finalists: {first} vs {second}.",
+        "smartscore_recommended": "Rec. prod. • Compat. {score:.0f}\u202f%",
     },
     "Español": {
         "page_title": "🧠 Smart Core – Cuestionario",
@@ -147,6 +148,7 @@ LANGUAGE_CONTENT = {
         "tab2_ab_step_two": "Paso 2 de 3: Elige tu favorito del segundo par.",
         "tab2_ab_step_three": "Paso final: Elige tu favorito entre los dos finalistas.",
         "tab2_ab_finalists": "Finalistas: {first} vs {second}.",
+        "smartscore_recommended": "Prod. recom. • Compat. {score:.0f}\u202f%",
     },
 }
 
@@ -1153,7 +1155,7 @@ def _render_visual_image(
         smartscore_html = (
             "<div class=\"smartscore-label\">"
             "<span class=\"smartscore-star\" aria-hidden=\"true\">⭐</span>"
-            f"<span class=\"smartscore-text\">SmartScore recomendado: {score_value:.3f}</span>"
+            f"<span class=\"smartscore-text\">{t('smartscore_recommended', score=score_value * 100)}</span>"
             "</div>"
         )
     st.markdown(
