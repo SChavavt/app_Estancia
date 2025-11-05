@@ -442,10 +442,20 @@ def _set_tab2_smartscore_map(user_name: str) -> None:
     if not cleaned:
         st.session_state["tab2_smartscore_map"] = {}
         st.session_state["tab2_smartscore_owner"] = ""
+        sessions = st.session_state.get("mode_sessions", {})
+        for mode_state in sessions.values():
+            if isinstance(mode_state, dict) and "ab_highlighted_product" in mode_state:
+                mode_state["ab_highlighted_product"] = None
+        st.session_state["mode_sessions"] = sessions
         return
 
     st.session_state["tab2_smartscore_map"] = _load_user_smartscore_map(cleaned)
     st.session_state["tab2_smartscore_owner"] = cleaned
+    sessions = st.session_state.get("mode_sessions", {})
+    for mode_state in sessions.values():
+        if isinstance(mode_state, dict) and "ab_highlighted_product" in mode_state:
+            mode_state["ab_highlighted_product"] = None
+    st.session_state["mode_sessions"] = sessions
 
 
 def _ensure_tab2_smartscore_map(user_name: str) -> None:
@@ -619,6 +629,7 @@ def _ensure_ab_mode_defaults(mode_state: dict) -> None:
     mode_state.setdefault("ab_final_options", [])
     mode_state.setdefault("ab_stage_starts", {})
     mode_state.setdefault("ab_stage_durations", {})
+    mode_state.setdefault("ab_highlighted_product", None)
 
     if mode_state["ab_stage"] > max_stage:
         mode_state["ab_stage"] = max_stage
@@ -716,6 +727,7 @@ def _ensure_mode_initialized(mode: str) -> None:
     }
     if mode == "A/B":
         _ensure_ab_mode_defaults(mode_state)
+        mode_state.setdefault("ab_highlighted_product", None)
     if mode == "Sequential":
         mode_state.setdefault("seq_product_durations", {})
         mode_state.setdefault("seq_product_visits", {})
@@ -1868,18 +1880,17 @@ with tab2:
                     st.warning(t("tab2_need_four_images_ab"))
                 else:
                     display_indexes = _get_ab_display_indexes(current_state)
-                    highlighted_product = None
-                    valid_paths = [
-                        images[i]
-                        for i in display_indexes
-                        if 0 <= i < len(images)
-                    ]
-                    if valid_paths:
+                    highlighted_product = current_state.get(
+                        "ab_highlighted_product"
+                    )
+                    if highlighted_product is None:
                         best_entry = _select_highest_smartscore_product(
-                            valid_paths, smartscore_map
+                            images, smartscore_map
                         )
-                        if best_entry:
-                            highlighted_product = best_entry[0]
+                        highlighted_product = best_entry[0] if best_entry else None
+                        current_state["ab_highlighted_product"] = highlighted_product
+                        mode_sessions[current_mode] = current_state
+                        st.session_state["mode_sessions"] = mode_sessions
                     if len(display_indexes) != 2:
                         st.warning(t("tab2_no_images_warning"))
                     else:
