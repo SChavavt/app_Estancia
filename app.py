@@ -1117,7 +1117,25 @@ def _complete_visual_experiment(user_name: str) -> None:
 
 
 
-def _render_visual_image(image_path: Path, mode: str) -> None:
+def _select_highest_smartscore_product(
+    image_paths: list[Path], smartscore_map: dict[str, float]
+) -> Optional[tuple[str, float]]:
+    best_entry: Optional[tuple[str, float]] = None
+    best_score = float("-inf")
+    for image_path in image_paths:
+        entry = _find_smartscore_for_image(image_path.stem, smartscore_map)
+        if not entry:
+            continue
+        _, score_value = entry
+        if best_entry is None or score_value > best_score:
+            best_entry = entry
+            best_score = score_value
+    return best_entry
+
+
+def _render_visual_image(
+    image_path: Path, mode: str, highlighted_product: Optional[str] = None
+) -> None:
     mode_class = {"A/B": "ab", "Grid": "grid", "Sequential": "seq"}.get(mode, "grid")
     image_bytes = image_path.read_bytes()
     encoded = base64.b64encode(image_bytes).decode("utf-8")
@@ -1128,7 +1146,9 @@ def _render_visual_image(image_path: Path, mode: str) -> None:
     smartscore_map: dict[str, float] = st.session_state.get("tab2_smartscore_map", {})
     smartscore_entry = _find_smartscore_for_image(image_path.stem, smartscore_map)
     smartscore_html = ""
-    if smartscore_entry:
+    if smartscore_entry and highlighted_product and (
+        smartscore_entry[0] == highlighted_product
+    ):
         _, score_value = smartscore_entry
         smartscore_html = (
             "<div class=\"smartscore-label\">"
@@ -1792,6 +1812,7 @@ with tab2:
         current_state = mode_sessions.get(current_mode, {})
 
         images = current_state.get("images", [])
+        smartscore_map = st.session_state.get("tab2_smartscore_map", {})
 
         info_message = t(
             "tab2_mode_info",
@@ -1845,6 +1866,18 @@ with tab2:
                     st.warning(t("tab2_need_four_images_ab"))
                 else:
                     display_indexes = _get_ab_display_indexes(current_state)
+                    highlighted_product = None
+                    valid_paths = [
+                        images[i]
+                        for i in display_indexes
+                        if 0 <= i < len(images)
+                    ]
+                    if valid_paths:
+                        best_entry = _select_highest_smartscore_product(
+                            valid_paths, smartscore_map
+                        )
+                        if best_entry:
+                            highlighted_product = best_entry[0]
                     if len(display_indexes) != 2:
                         st.warning(t("tab2_no_images_warning"))
                     else:
@@ -1856,7 +1889,9 @@ with tab2:
                                 continue
                             image_path = images[image_index]
                             with col:
-                                _render_visual_image(image_path, current_mode)
+                                _render_visual_image(
+                                    image_path, current_mode, highlighted_product
+                                )
                                 if current_state.get("selected") == image_path.stem:
                                     st.caption(t("tab2_selected_label"))
                                 if st.button(
@@ -1874,13 +1909,19 @@ with tab2:
                 if len(images) < 2:
                     st.warning(t("tab2_need_two_images_grid"))
                 else:
+                    grid_best = _select_highest_smartscore_product(
+                        images, smartscore_map
+                    )
+                    highlighted_product = grid_best[0] if grid_best else None
                     for start in range(0, len(images), 2):
                         columns = st.columns(2)
                         for offset, (col, image_path) in enumerate(
                             zip(columns, images[start : start + 2])
                         ):
                             with col:
-                                _render_visual_image(image_path, current_mode)
+                                _render_visual_image(
+                                    image_path, current_mode, highlighted_product
+                                )
                                 if current_state.get("selected") == image_path.stem:
                                     st.caption(t("tab2_selected_label"))
                                 if st.button(
@@ -1902,11 +1943,15 @@ with tab2:
                     st.session_state["mode_sessions"] = mode_sessions
 
                 current_image = images[index]
+                seq_best = _select_highest_smartscore_product(images, smartscore_map)
+                highlighted_product = seq_best[0] if seq_best else None
                 current_state = _ensure_seq_view_state(current_state, current_image)
                 mode_sessions[current_mode] = current_state
                 st.session_state["mode_sessions"] = mode_sessions
 
-                _render_visual_image(current_image, current_mode)
+                _render_visual_image(
+                    current_image, current_mode, highlighted_product
+                )
 
                 prev_clicked = False
                 choose_clicked = False
