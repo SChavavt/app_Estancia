@@ -6,6 +6,7 @@ import base64
 import html
 import threading
 import time
+import unicodedata
 from io import BytesIO
 from datetime import datetime
 from pathlib import Path
@@ -228,12 +229,29 @@ st.session_state.setdefault("_reset_form_requested", False)
 st.session_state.setdefault("visual_log", [])
 st.session_state.setdefault("tab2_authenticated", False)
 st.session_state.setdefault("tab2_user_name", "")
+st.session_state.setdefault("tab2_smartscore_map", {})
+st.session_state.setdefault("tab2_smartscore_owner", "")
 
 VISUAL_MODE_OPTIONS = ["A/B", "Grid", "Sequential"]
 VISUAL_SUBFOLDERS = {"A/B": "A_B", "Grid": "Grid", "Sequential": "Sequential"}
 VALID_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
 VISUAL_BASE_PATH = Path("data/images")
 VISUAL_RESULTS_DIR = Path("data/experimentos")
+
+IMAGE_STEM_TO_PRODUCT = {
+    "annies": "Annie’s Shells & White Cheddar",
+    "mac&cheese": "Kraft Macaroni & Cheese Dinner",
+    "velveeta": "Velveeta Original Shells & Cheese (microwave cups)",
+    "hormel": "Amy’s Macaroni & Cheese (frozen)",
+    "maruchan": "Maruchan Ramen Sabor Pollo",
+    "migoreng": "Nissin Chow Mein Teriyaki Beef",
+    "neu": "Nongshim Neoguri Spicy Seafood",
+    "shin-ramyun": "Nongshim Shin Ramyun",
+    "tuna": "Wild Planet Wild Tuna Pasta Salad",
+    "chicken": "StarKist Chicken Creations (Chicken Salad)",
+    "indian": "Kitchens of India Variety Pack",
+    "jacklinks": "Jack Link’s Beef Jerky Original",
+}
 
 TAB2_IMAGE_STYLES = """
 <style>
@@ -295,6 +313,17 @@ TAB2_IMAGE_STYLES = """
     margin: 0.2rem 0 0.4rem;
 }
 
+.smartscore-label {
+    background-color: rgba(30, 144, 255, 0.15);
+    color: #004080;
+    font-size: 0.85rem;
+    font-weight: 600;
+    border-radius: 6px;
+    padding: 3px 8px;
+    margin-top: 4px;
+    text-align: center;
+}
+
 @media (max-width: 1200px) {
     .tab2-image-container.ab img,
     .tab2-image-container.grid img {
@@ -326,6 +355,125 @@ def _read_all_products(files_dict: dict) -> pd.DataFrame:
         df["Categoría__App"] = category
         frames.append(df)
     return pd.concat(frames, ignore_index=True)
+
+
+def _normalize_product_key(value: str) -> str:
+    if not isinstance(value, str):
+        return ""
+    normalized = unicodedata.normalize("NFKD", value)
+    normalized = "".join(
+        ch for ch in normalized if unicodedata.category(ch) != "Mn"
+    )
+    normalized = normalized.casefold()
+    return re.sub(r"[^a-z0-9]+", "", normalized)
+
+
+def _load_user_smartscore_map(user_name: str) -> dict[str, float]:
+    cleaned = user_name.strip()
+    if not cleaned:
+        return {}
+
+    results_path = Path(RESULTS_PATH_IN_REPO)
+    if not results_path.exists():
+        return {}
+
+    try:
+        df = pd.read_excel(results_path)
+    except Exception:
+        return {}
+
+    if "Nombre Completo" not in df.columns:
+        return {}
+
+    nombres = df["Nombre Completo"].astype(str).str.strip()
+    mask = nombres.str.casefold() == cleaned.casefold()
+    if not mask.any():
+        return {}
+
+    fila = df[mask].iloc[-1]
+    resultados: dict[str, float] = {}
+
+    for columna in df.columns:
+        if not columna.endswith("· Producto"):
+            continue
+
+        producto_valor = fila.get(columna)
+        if not isinstance(producto_valor, str):
+            continue
+        producto = producto_valor.strip()
+        if not producto:
+            continue
+
+        columna_smartscore = columna.replace("· Producto", "· SmartScore")
+        smartscore_valor = fila.get(columna_smartscore)
+        if pd.isna(smartscore_valor):
+            continue
+
+        try:
+            smartscore = float(smartscore_valor)
+        except (TypeError, ValueError):
+            try:
+                smartscore = float(str(smartscore_valor).replace(",", "."))
+            except (TypeError, ValueError):
+                continue
+
+        resultados[producto] = smartscore
+
+    return resultados
+
+
+def _set_tab2_smartscore_map(user_name: str) -> None:
+    cleaned = user_name.strip()
+    if not cleaned:
+        st.session_state["tab2_smartscore_map"] = {}
+        st.session_state["tab2_smartscore_owner"] = ""
+        return
+
+    st.session_state["tab2_smartscore_map"] = _load_user_smartscore_map(cleaned)
+    st.session_state["tab2_smartscore_owner"] = cleaned
+
+
+def _ensure_tab2_smartscore_map(user_name: str) -> None:
+    owner = st.session_state.get("tab2_smartscore_owner", "")
+    cleaned = user_name.strip()
+
+    if not cleaned:
+        if owner:
+            _set_tab2_smartscore_map("")
+        return
+
+    if owner.casefold() != cleaned.casefold():
+        _set_tab2_smartscore_map(cleaned)
+
+
+def _find_smartscore_for_image(
+    stem: str, smartscore_map: dict[str, float]
+) -> Optional[tuple[str, float]]:
+    if not stem or not smartscore_map:
+        return None
+
+    normalizados: dict[str, tuple[str, float]] = {}
+    for producto, puntaje in smartscore_map.items():
+        clave = _normalize_product_key(producto)
+        if not clave:
+            continue
+        normalizados[clave] = (producto, puntaje)
+
+    alias_producto = IMAGE_STEM_TO_PRODUCT.get(stem.casefold())
+    if alias_producto:
+        clave_alias = _normalize_product_key(alias_producto)
+        if clave_alias in normalizados:
+            return normalizados[clave_alias]
+
+    clave_imagen = _normalize_product_key(stem)
+    if clave_imagen in normalizados:
+        return normalizados[clave_imagen]
+
+    for clave, datos in normalizados.items():
+        if clave_imagen and (clave_imagen in clave or clave in clave_imagen):
+            return datos
+
+    return None
 
 
 def _extract_minutes(s: str) -> float:
@@ -964,11 +1112,20 @@ def _render_visual_image(image_path: Path, mode: str) -> None:
     if extension == "jpg":
         extension = "jpeg"
     caption = html.escape(image_path.stem.replace("_", " "))
+    smartscore_map: dict[str, float] = st.session_state.get("tab2_smartscore_map", {})
+    smartscore_entry = _find_smartscore_for_image(image_path.stem, smartscore_map)
+    smartscore_html = ""
+    if smartscore_entry:
+        _, score_value = smartscore_entry
+        smartscore_html = (
+            f"<div class=\"smartscore-label\">⭐ SmartScore recomendado: {score_value:.3f}</div>"
+        )
     st.markdown(
         f"""
         <div class="tab2-image-container {mode_class}">
             <img src="data:image/{extension};base64,{encoded}" alt="{caption}" />
             <p class="tab2-image-caption">{caption}</p>
+            {smartscore_html}
         </div>
         """,
         unsafe_allow_html=True,
@@ -1526,9 +1683,11 @@ with tab2:
         st.warning(t("tab2_name_reused_warning"))
         st.session_state["tab2_authenticated"] = False
         st.session_state["tab2_user_name"] = ""
+        _set_tab2_smartscore_map("")
 
     if not registered_names:
         st.info(t("tab2_requires_response_info"))
+        _set_tab2_smartscore_map("")
         tab2_can_continue = False
 
     if tab2_can_continue and not st.session_state.get("tab2_authenticated", False):
@@ -1543,6 +1702,7 @@ with tab2:
             st.session_state["tab2_authenticated"] = True
             st.session_state["tab2_user_name"] = selected_name
             _reset_visual_experiment_state()
+            _set_tab2_smartscore_map(selected_name)
 
     if tab2_can_continue and not st.session_state.get("tab2_authenticated", False):
         st.info(t("tab2_choose_name_info"))
@@ -1550,18 +1710,21 @@ with tab2:
 
     if tab2_can_continue:
         usuario_activo = st.session_state.get("tab2_user_name", "")
+        _ensure_tab2_smartscore_map(usuario_activo)
         st.success(t("tab2_logged_in_as", user=usuario_activo))
 
         if st.button(t("tab2_switch_user"), key="tab2_logout"):
             st.session_state["tab2_authenticated"] = False
             st.session_state["tab2_user_name"] = ""
             _reset_visual_experiment_state()
+            _set_tab2_smartscore_map("")
             _trigger_streamlit_rerun()
 
         sequence = st.session_state.get("mode_sequence", [])
     else:
         usuario_activo = ""
         sequence = []
+        _ensure_tab2_smartscore_map("")
 
     if tab2_can_continue and not sequence:
         st.warning(t("tab2_no_modes_warning"))
