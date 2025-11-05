@@ -339,6 +339,10 @@ TAB2_IMAGE_STYLES = """
     filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.25));
 }
 
+.smartscore-label.smartscore-placeholder {
+    visibility: hidden;
+}
+
 @media (max-width: 1200px) {
     .tab2-image-container.ab img,
     .tab2-image-container.grid img {
@@ -1169,6 +1173,10 @@ def _render_visual_image(
             "<span class=\"smartscore-star\" aria-hidden=\"true\">⭐</span>"
             f"<span class=\"smartscore-text\">{t('smartscore_recommended', score=score_value * 100)}</span>"
             "</div>"
+        )
+    else:
+        smartscore_html = (
+            "<div class=\"smartscore-label smartscore-placeholder\" aria-hidden=\"true\"></div>"
         )
     st.markdown(
         f"""
