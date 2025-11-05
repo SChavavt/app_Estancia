@@ -314,14 +314,17 @@ TAB2_IMAGE_STYLES = """
 }
 
 .smartscore-label {
-    background-color: rgba(30, 144, 255, 0.15);
-    color: #004080;
-    font-size: 0.85rem;
-    font-weight: 600;
-    border-radius: 6px;
-    padding: 3px 8px;
-    margin-top: 4px;
+    background: linear-gradient(135deg, rgba(255, 215, 0, 0.95), rgba(255, 165, 0, 0.95));
+    color: #1f1400;
+    font-size: 0.9rem;
+    font-weight: 700;
+    border-radius: 8px;
+    padding: 6px 10px;
+    margin-top: 6px;
     text-align: center;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+    display: inline-block;
 }
 
 @media (max-width: 1200px) {
