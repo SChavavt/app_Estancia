@@ -323,7 +323,7 @@ TAB2_IMAGE_STYLES = """
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
-    margin: 0;
+    margin-top: 6px;
 }
 
 .smartscore-label .smartscore-text {
@@ -341,22 +341,6 @@ TAB2_IMAGE_STYLES = """
 .smartscore-label .smartscore-star {
     font-size: 1rem;
     filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.25));
-}
-
-.smartscore-badge-cell {
-    display: flex;
-    align-items: center;
-    justify-content: flex-start;
-    padding-top: 0.5rem;
-    min-height: 42px;
-}
-
-.smartscore-badge-cell.seq {
-    justify-content: center;
-}
-
-.smartscore-placeholder {
-    visibility: hidden;
 }
 
 @media (max-width: 1200px) {
@@ -1172,7 +1156,7 @@ def _select_highest_smartscore_product(
 
 def _render_visual_image(
     image_path: Path, mode: str, highlighted_product: Optional[str] = None
-) -> str:
+) -> None:
     mode_class = {"A/B": "ab", "Grid": "grid", "Sequential": "seq"}.get(mode, "grid")
     image_bytes = image_path.read_bytes()
     encoded = base64.b64encode(image_bytes).decode("utf-8")
@@ -1198,11 +1182,11 @@ def _render_visual_image(
         <div class="tab2-image-container {mode_class}">
             <img src="data:image/{extension};base64,{encoded}" alt="{caption}" />
             <p class="tab2-image-caption">{caption}</p>
+            {smartscore_html}
         </div>
         """,
         unsafe_allow_html=True,
     )
-    return smartscore_html
 
 
 def _df_to_excel_bytes(df: pd.DataFrame) -> bytes:
@@ -1925,29 +1909,15 @@ with tab2:
                                 continue
                             image_path = images[image_index]
                             with col:
-                                smartscore_html = _render_visual_image(
+                                _render_visual_image(
                                     image_path, current_mode, highlighted_product
                                 )
-                                badge_col, button_col = st.columns([1, 1], gap="small")
-                                with badge_col:
-                                    st.markdown(
-                                        "<div class='smartscore-badge-cell'>{}</div>".format(
-                                            smartscore_html
-                                            or "<span class='smartscore-placeholder'>&nbsp;</span>"
-                                        ),
-                                        unsafe_allow_html=True,
-                                    )
-                                choose_clicked = False
-                                with button_col:
-                                    if st.button(
-                                        t("tab2_choose_product"),
-                                        key=f"choose_{current_mode}_{ab_stage}_{idx}",
-                                        use_container_width=True,
-                                    ):
-                                        choose_clicked = True
                                 if current_state.get("selected") == image_path.stem:
                                     st.caption(t("tab2_selected_label"))
-                                if choose_clicked:
+                                if st.button(
+                                    t("tab2_choose_product"),
+                                    key=f"choose_{current_mode}_{ab_stage}_{idx}",
+                                ):
                                     _handle_mode_selection(
                                         current_mode, image_path.stem, usuario_activo
                                     )
@@ -1969,29 +1939,15 @@ with tab2:
                             zip(columns, images[start : start + 2])
                         ):
                             with col:
-                                smartscore_html = _render_visual_image(
+                                _render_visual_image(
                                     image_path, current_mode, highlighted_product
                                 )
-                                badge_col, button_col = st.columns([1, 1], gap="small")
-                                with badge_col:
-                                    st.markdown(
-                                        "<div class='smartscore-badge-cell'>{}</div>".format(
-                                            smartscore_html
-                                            or "<span class='smartscore-placeholder'>&nbsp;</span>"
-                                        ),
-                                        unsafe_allow_html=True,
-                                    )
-                                choose_clicked = False
-                                with button_col:
-                                    if st.button(
-                                        t("tab2_choose_product"),
-                                        key=f"choose_{current_mode}_{start + offset}",
-                                        use_container_width=True,
-                                    ):
-                                        choose_clicked = True
                                 if current_state.get("selected") == image_path.stem:
                                     st.caption(t("tab2_selected_label"))
-                                if choose_clicked:
+                                if st.button(
+                                    t("tab2_choose_product"),
+                                    key=f"choose_{current_mode}_{start + offset}",
+                                ):
                                     _handle_mode_selection(
                                         current_mode, image_path.stem, usuario_activo
                                     )
@@ -2013,15 +1969,9 @@ with tab2:
                 mode_sessions[current_mode] = current_state
                 st.session_state["mode_sessions"] = mode_sessions
 
-                smartscore_html = _render_visual_image(
+                _render_visual_image(
                     current_image, current_mode, highlighted_product
                 )
-
-                if smartscore_html:
-                    st.markdown(
-                        f"<div class='smartscore-badge-cell seq'>{smartscore_html}</div>",
-                        unsafe_allow_html=True,
-                    )
 
                 prev_clicked = False
                 choose_clicked = False
