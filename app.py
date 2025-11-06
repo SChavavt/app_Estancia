@@ -280,7 +280,11 @@ TAB2_IMAGE_STYLES = """
     color: inherit;
 }
 
-.tab2-image-container.ab img,
+
+.tab2-image-container.ab img {
+    height: min(34vh, 360px);
+}
+
 .tab2-image-container.grid img {
     height: min(28vh, 320px);
 }
@@ -340,7 +344,10 @@ TAB2_IMAGE_STYLES = """
 }
 
 @media (max-width: 1200px) {
-    .tab2-image-container.ab img,
+    .tab2-image-container.ab img {
+        height: min(30vh, 320px);
+    }
+
     .tab2-image-container.grid img {
         height: min(26vh, 260px);
     }
