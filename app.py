@@ -282,7 +282,7 @@ TAB2_IMAGE_STYLES = """
 
 
 .tab2-image-container.ab img {
-    height: min(34vh, 360px);
+    height: min(40vh, 420px);
 }
 
 .tab2-image-container.grid img {
@@ -345,7 +345,7 @@ TAB2_IMAGE_STYLES = """
 
 @media (max-width: 1200px) {
     .tab2-image-container.ab img {
-        height: min(30vh, 320px);
+        height: min(34vh, 360px);
     }
 
     .tab2-image-container.grid img {
