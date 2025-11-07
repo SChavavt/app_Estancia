@@ -14,7 +14,6 @@ from typing import Optional
 
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 from github import Github, GithubException
 import msgpack
 import zmq
@@ -234,7 +233,6 @@ st.session_state.setdefault("tab2_authenticated", False)
 st.session_state.setdefault("tab2_user_name", "")
 st.session_state.setdefault("tab2_smartscore_map", {})
 st.session_state.setdefault("tab2_smartscore_owner", "")
-st.session_state.setdefault("cursor_tracks", {})
 
 VISUAL_MODE_OPTIONS = ["A/B", "Grid", "Sequential"]
 VISUAL_SUBFOLDERS = {"A/B": "A_B", "Grid": "Grid", "Sequential": "Sequential"}
@@ -702,120 +700,6 @@ def _reset_visual_experiment_state() -> None:
     st.session_state["experiment_result_path"] = ""
     st.session_state["experiment_result_df"] = pd.DataFrame()
     st.session_state["last_selection_feedback"] = ""
-    st.session_state["cursor_tracks"] = {}
-
-
-def _store_cursor_batch(mode: str, batch: list) -> None:
-    if not mode or not batch:
-        return
-    tracks: dict = st.session_state.setdefault("cursor_tracks", {})
-    mode_track: list = tracks.setdefault(mode, [])
-    for entry in batch:
-        if not isinstance(entry, dict):
-            continue
-        try:
-            timestamp_ms = float(entry.get("t"))
-            x = float(entry.get("x"))
-            y = float(entry.get("y"))
-        except (TypeError, ValueError, OverflowError):
-            continue
-        try:
-            timestamp_iso = datetime.fromtimestamp(timestamp_ms / 1000.0).isoformat()
-        except (OSError, OverflowError, ValueError):
-            continue
-        point = {
-            "timestamp": timestamp_iso,
-            "x": round(x, 3),
-            "y": round(y, 3),
-            "mode": mode,
-        }
-        page_x = entry.get("px")
-        page_y = entry.get("py")
-        try:
-            if page_x is not None and page_y is not None:
-                point["page_x"] = round(float(page_x), 3)
-                point["page_y"] = round(float(page_y), 3)
-        except (TypeError, ValueError, OverflowError):
-            pass
-        mode_track.append(point)
-    if len(mode_track) > 5000:
-        mode_track[:] = mode_track[-5000:]
-    tracks[mode] = mode_track
-    st.session_state["cursor_tracks"] = tracks
-
-
-def _capture_cursor_movements(active_mode: str) -> None:
-    if not active_mode:
-        return
-    batch = components.html(
-        """
-        <script>
-        (function() {
-            const Streamlit = window.Streamlit;
-            if (!Streamlit) {
-                return;
-            }
-            const stateKey = "__cursorTrackerState";
-            const throttleMs = 200;
-            const maxBatch = 60;
-            const state = window[stateKey] || (window[stateKey] = {
-                pending: [],
-                lastSent: 0,
-                initialized: false,
-            });
-            function send(force) {
-                const now = Date.now();
-                if (!force && (now - state.lastSent) < throttleMs) {
-                    return;
-                }
-                if (!state.pending.length) {
-                    return;
-                }
-                state.lastSent = now;
-                const payload = state.pending.slice();
-                state.pending.length = 0;
-                Streamlit.setComponentValue(payload);
-            }
-            if (!state.initialized) {
-                state.initialized = true;
-                document.addEventListener("mousemove", (event) => {
-                    state.pending.push({
-                        t: Date.now(),
-                        x: event.clientX,
-                        y: event.clientY,
-                        px: event.pageX,
-                        py: event.pageY,
-                    });
-                    if (state.pending.length >= maxBatch) {
-                        send(true);
-                    } else {
-                        send(false);
-                    }
-                });
-                document.addEventListener("mouseleave", () => send(true));
-                window.addEventListener("blur", () => send(true));
-                window.addEventListener("beforeunload", () => send(true));
-                setInterval(() => send(false), throttleMs);
-            }
-            Streamlit.setComponentReady();
-            send(false);
-        })();
-        </script>
-        """,
-        height=0,
-        key="cursor_tracker_component",
-    )
-    if not batch:
-        return
-    if isinstance(batch, str):
-        try:
-            data = json.loads(batch)
-        except json.JSONDecodeError:
-            return
-    else:
-        data = batch
-    if isinstance(data, list):
-        _store_cursor_batch(active_mode, data)
 
 
 def _ensure_mode_initialized(mode: str) -> None:
@@ -1170,7 +1054,6 @@ def _advance_visual_mode() -> None:
 def _build_experiment_dataframe(user_name: str) -> pd.DataFrame:
     sequence: list = st.session_state.get("mode_sequence", [])
     sessions: dict = st.session_state.get("mode_sessions", {})
-    cursor_tracks: dict = st.session_state.get("cursor_tracks", {})
     records: list[dict] = []
     for mode in sequence:
         state = sessions.get(mode, {})
@@ -1192,12 +1075,6 @@ def _build_experiment_dataframe(user_name: str) -> pd.DataFrame:
             "Momento de selección": selection_time.isoformat() if selection_time else "",
             "Momento de finalización": completion_time.isoformat() if completion_time else "",
         }
-
-        cursor_points = cursor_tracks.get(mode, [])
-        record["Cursor · Puntos registrados"] = len(cursor_points)
-        record["Cursor · Recorrido"] = (
-            json.dumps(cursor_points, ensure_ascii=False) if cursor_points else ""
-        )
 
         if mode == "A/B":
             stage_durations = state.get("ab_stage_durations", {})
@@ -1957,8 +1834,6 @@ with tab2:
 
         images = current_state.get("images", [])
         smartscore_map = st.session_state.get("tab2_smartscore_map", {})
-
-        _capture_cursor_movements(current_mode)
 
         info_message = t(
             "tab2_mode_info",
