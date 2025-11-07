@@ -747,8 +747,7 @@ def _store_cursor_batch(mode: str, batch: list) -> None:
 def _capture_cursor_movements(active_mode: str) -> None:
     if not active_mode:
         return
-    batch = components.html(
-        """
+    html_code = """
         <script>
         (function() {
             const Streamlit = window.Streamlit;
@@ -801,10 +800,21 @@ def _capture_cursor_movements(active_mode: str) -> None:
             send(false);
         })();
         </script>
-        """,
-        height=0,
-        key="cursor_tracker_component",
-    )
+        """
+    html_kwargs = {"height": 0}
+    key_supported = st.session_state.get("_cursor_tracker_key_supported", True)
+    try:
+        if key_supported:
+            batch = components.html(
+                html_code,
+                key="cursor_tracker_component",
+                **html_kwargs,
+            )
+        else:
+            batch = components.html(html_code, **html_kwargs)
+    except TypeError:
+        st.session_state["_cursor_tracker_key_supported"] = False
+        batch = components.html(html_code, **html_kwargs)
     if not batch:
         return
     if isinstance(batch, str):
