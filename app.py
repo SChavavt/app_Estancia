@@ -1201,7 +1201,7 @@ def _advance_visual_mode() -> None:
     _trigger_streamlit_rerun()
 
 
-def _build_experiment_dataframe(user_name: str) -> pd.DataFrame:
+def _build_experiment_results(user_name: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     sequence: list = st.session_state.get("mode_sequence", [])
     sessions: dict = st.session_state.get("mode_sessions", {})
     cursor_tracks: dict = st.session_state.get("cursor_tracks", {})
@@ -1273,9 +1273,14 @@ def _build_experiment_dataframe(user_name: str) -> pd.DataFrame:
             )
 
         records.append(record)
-    df = pd.DataFrame(records)
 
-    if global_cursor_points:
+    summary_df = pd.DataFrame(records)
+
+    cursor_points_df = pd.DataFrame(global_cursor_points)
+
+    if not cursor_points_df.empty:
+        cursor_points_df = cursor_points_df.sort_values("timestamp")
+
         (
             total_points,
             start_timestamp,
@@ -1293,9 +1298,11 @@ def _build_experiment_dataframe(user_name: str) -> pd.DataFrame:
                 global_cursor_points, ensure_ascii=False
             ),
         }
-        df = pd.concat([df, pd.DataFrame([summary_row])], ignore_index=True)
+        summary_df = pd.concat(
+            [summary_df, pd.DataFrame([summary_row])], ignore_index=True
+        )
 
-    return df
+    return summary_df, cursor_points_df
 
 
 def _complete_visual_experiment(user_name: str) -> None:
@@ -1316,14 +1323,23 @@ def _complete_visual_experiment(user_name: str) -> None:
             sessions[mode_name] = mode_state
     st.session_state["mode_sessions"] = sessions
 
-    df = _build_experiment_dataframe(user_name)
+    summary_df, cursor_points_df = _build_experiment_results(user_name)
     VISUAL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_name = _sanitize_filename_component(user_name)
     file_path = VISUAL_RESULTS_DIR / f"experimento_{safe_name}_{timestamp}.xlsx"
-    df.to_excel(file_path, index=False)
 
-    st.session_state["experiment_result_df"] = df
+    with pd.ExcelWriter(file_path, engine="openpyxl") as writer:
+        summary_df.to_excel(writer, sheet_name="Resumen", index=False)
+        if not cursor_points_df.empty:
+            cursor_points_df.to_excel(
+                writer,
+                sheet_name="Cursor crudo",
+                index=False,
+            )
+
+    st.session_state["experiment_result_df"] = summary_df
+    st.session_state["experiment_cursor_points_df"] = cursor_points_df
     st.session_state["experiment_result_path"] = str(file_path)
     st.session_state["experiment_completed"] = True
     st.session_state["last_selection_feedback"] = ""
@@ -1384,6 +1400,23 @@ def _render_visual_image(
 def _df_to_excel_bytes(df: pd.DataFrame) -> bytes:
     buffer = BytesIO()
     df.to_excel(buffer, index=False)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def _experiment_results_to_excel_bytes(
+    summary_df: pd.DataFrame, cursor_points_df: pd.DataFrame
+) -> bytes:
+    buffer = BytesIO()
+    sheets: dict[str, pd.DataFrame] = {"Resumen": summary_df}
+    if isinstance(cursor_points_df, pd.DataFrame) and not cursor_points_df.empty:
+        sheets["Cursor crudo"] = cursor_points_df
+
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        for sheet_name, sheet_df in sheets.items():
+            safe_sheet = sheet_name[:31] or "Hoja1"
+            sheet_df.to_excel(writer, sheet_name=safe_sheet, index=False)
+
     buffer.seek(0)
     return buffer.getvalue()
 
@@ -1986,6 +2019,7 @@ with tab2:
         if st.session_state.get("experiment_completed"):
             result_path = st.session_state.get("experiment_result_path", "")
             result_df = st.session_state.get("experiment_result_df")
+            cursor_df = st.session_state.get("experiment_cursor_points_df")
             if result_path:
                 st.success(t("tab2_completed_with_path", path=result_path))
             else:
@@ -1993,6 +2027,9 @@ with tab2:
 
             if isinstance(result_df, pd.DataFrame) and not result_df.empty:
                 st.dataframe(result_df)
+                if isinstance(cursor_df, pd.DataFrame) and not cursor_df.empty:
+                    with st.expander("📍 Trayectoria completa del cursor"):
+                        st.dataframe(cursor_df)
                 download_name = (
                     Path(result_path).name
                     if result_path
@@ -2000,7 +2037,10 @@ with tab2:
                 )
                 st.download_button(
                     t("tab2_download_results"),
-                    data=_df_to_excel_bytes(result_df),
+                    data=_experiment_results_to_excel_bytes(
+                        result_df,
+                        cursor_df if isinstance(cursor_df, pd.DataFrame) else pd.DataFrame(),
+                    ),
                     file_name=download_name,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
