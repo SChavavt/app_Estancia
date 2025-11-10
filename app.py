@@ -63,12 +63,14 @@ LANGUAGE_CONTENT = {
         "tab2_name_reused_warning": "The name you used to sign in is no longer available. Select another name to continue.",
         "tab2_requires_response_info": "To access this section, first save at least one response from the SmartScore tab.",
         "tab2_select_name_prompt": "Select your registered full name",
-        "tab2_login_button": "Sign in",
+        "tab2_password_prompt": "Enter the password to unlock the visual experiment.",
+        "tab2_unlock_button": "Unlock",
         "tab2_password_label": "Enter the password",
         "tab2_password_error": "Incorrect password. Please try again.",
-        "tab2_choose_name_info": "Select a name to view the visual experiment.",
+        "tab2_choose_name_info": "Select a name and click Start experiment to begin.",
         "tab2_logged_in_as": "Signed in as: {user}",
         "tab2_switch_user": "Switch user",
+        "tab2_start_experiment": "Start experiment",
         "tab2_no_modes_warning": "No viewing modes are configured for the visual experiment. Contact the administrator.",
         "tab2_completed_with_path": "✅ Experiment completed. Results saved at: {path}",
         "tab2_completed": "✅ Experiment completed.",
@@ -131,12 +133,14 @@ LANGUAGE_CONTENT = {
         "tab2_name_reused_warning": "El nombre con el que accediste ya no está disponible. Selecciona otro nombre para continuar.",
         "tab2_requires_response_info": "Para acceder a esta sección primero guarda al menos una respuesta desde la pestaña de SmartScore.",
         "tab2_select_name_prompt": "Selecciona tu nombre completo registrado",
-        "tab2_login_button": "Ingresar",
+        "tab2_password_prompt": "Ingresa la contraseña para desbloquear el experimento visual.",
+        "tab2_unlock_button": "Desbloquear",
         "tab2_password_label": "Ingresa la contraseña",
         "tab2_password_error": "Contraseña incorrecta. Intenta nuevamente.",
-        "tab2_choose_name_info": "Selecciona un nombre para ver el experimento visual.",
+        "tab2_choose_name_info": "Selecciona un nombre y haz clic en Empezar experimento para iniciar.",
         "tab2_logged_in_as": "Accediendo como: {user}",
         "tab2_switch_user": "Cambiar de usuario",
+        "tab2_start_experiment": "Empezar experimento",
         "tab2_no_modes_warning": "No hay modalidades configuradas para el experimento visual. Contacta al administrador.",
         "tab2_completed_with_path": "✅ Experimento finalizado. Resultados guardados en: {path}",
         "tab2_completed": "✅ Experimento finalizado.",
@@ -241,6 +245,7 @@ st.session_state.setdefault("trigger_balloons", False)
 st.session_state.setdefault("_reset_form_requested", False)
 st.session_state.setdefault("visual_log", [])
 st.session_state.setdefault("tab2_authenticated", False)
+st.session_state.setdefault("tab2_password_unlocked", False)
 st.session_state.setdefault("tab2_user_name", "")
 st.session_state.setdefault("tab2_smartscore_map", {})
 st.session_state.setdefault("tab2_smartscore_owner", "")
@@ -1982,34 +1987,53 @@ with tab2:
         _set_tab2_smartscore_map("")
         tab2_can_continue = False
 
-    if tab2_can_continue and not st.session_state.get("tab2_authenticated", False):
-        with st.form("tab2_login_form"):
-            selected_name = st.selectbox(
-                t("tab2_select_name_prompt"),
-                registered_names,
-            )
+    if tab2_can_continue and not st.session_state.get("tab2_password_unlocked", False):
+        st.caption(t("tab2_password_prompt"))
+        with st.form("tab2_password_form"):
             entered_password = st.text_input(
                 t("tab2_password_label"),
                 type="password",
             )
-            login_submitted = st.form_submit_button(t("tab2_login_button"))
+            unlock_submitted = st.form_submit_button(t("tab2_unlock_button"))
 
-        if login_submitted:
+        if unlock_submitted:
             if entered_password == "Chava":
-                st.session_state["tab2_authenticated"] = True
-                st.session_state["tab2_user_name"] = selected_name
-                _reset_visual_experiment_state()
-                _set_tab2_smartscore_map(selected_name)
-            else:
+                st.session_state["tab2_password_unlocked"] = True
                 st.session_state["tab2_authenticated"] = False
                 st.session_state["tab2_user_name"] = ""
                 _reset_visual_experiment_state()
                 _set_tab2_smartscore_map("")
+                _trigger_streamlit_rerun()
+            else:
+                st.session_state["tab2_password_unlocked"] = False
                 st.error(t("tab2_password_error"))
 
-    if tab2_can_continue and not st.session_state.get("tab2_authenticated", False):
-        st.info(t("tab2_choose_name_info"))
         tab2_can_continue = False
+
+    if (
+        tab2_can_continue
+        and st.session_state.get("tab2_password_unlocked", False)
+        and not st.session_state.get("tab2_authenticated", False)
+    ):
+        selected_name = st.selectbox(
+            t("tab2_select_name_prompt"),
+            registered_names,
+        )
+        start_clicked = st.button(
+            t("tab2_start_experiment"),
+            key="tab2_start_experiment_button",
+        )
+
+        if start_clicked:
+            st.session_state["tab2_authenticated"] = True
+            st.session_state["tab2_user_name"] = selected_name
+            _reset_visual_experiment_state()
+            _set_tab2_smartscore_map(selected_name)
+            _trigger_streamlit_rerun()
+
+        if not st.session_state.get("tab2_authenticated", False):
+            st.info(t("tab2_choose_name_info"))
+            tab2_can_continue = False
 
     if tab2_can_continue:
         usuario_activo = st.session_state.get("tab2_user_name", "")
