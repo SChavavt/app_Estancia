@@ -744,6 +744,30 @@ def _store_cursor_batch(mode: str, batch: list) -> None:
     st.session_state["cursor_tracks"] = tracks
 
 
+def _extract_cursor_stats(cursor_points: list[dict]) -> tuple[int, str, str, Optional[float]]:
+    total_points = len(cursor_points)
+    if not cursor_points:
+        return total_points, "", "", None
+
+    timestamps: list[datetime] = []
+    for point in cursor_points:
+        raw_timestamp = point.get("timestamp")
+        if not isinstance(raw_timestamp, str):
+            continue
+        try:
+            timestamps.append(datetime.fromisoformat(raw_timestamp))
+        except ValueError:
+            continue
+
+    if not timestamps:
+        return total_points, "", "", None
+
+    start = min(timestamps)
+    end = max(timestamps)
+    duration = (end - start).total_seconds() if end >= start else None
+    return total_points, start.isoformat(), end.isoformat(), duration
+
+
 def _capture_cursor_movements(active_mode: str) -> None:
     if not active_mode:
         return
@@ -1182,6 +1206,7 @@ def _build_experiment_dataframe(user_name: str) -> pd.DataFrame:
     sessions: dict = st.session_state.get("mode_sessions", {})
     cursor_tracks: dict = st.session_state.get("cursor_tracks", {})
     records: list[dict] = []
+    global_cursor_points: list[dict] = []
     for mode in sequence:
         state = sessions.get(mode, {})
         start_time = state.get("start_time")
@@ -1204,10 +1229,22 @@ def _build_experiment_dataframe(user_name: str) -> pd.DataFrame:
         }
 
         cursor_points = cursor_tracks.get(mode, [])
-        record["Cursor · Puntos registrados"] = len(cursor_points)
+        (
+            cursor_total,
+            cursor_start,
+            cursor_end,
+            cursor_duration,
+        ) = _extract_cursor_stats(cursor_points)
+        record["Cursor · Puntos registrados"] = cursor_total
+        record["Cursor · Inicio"] = cursor_start
+        record["Cursor · Fin"] = cursor_end
+        record["Cursor · Duración (s)"] = cursor_duration
         record["Cursor · Recorrido"] = (
             json.dumps(cursor_points, ensure_ascii=False) if cursor_points else ""
         )
+
+        if cursor_points:
+            global_cursor_points.extend(cursor_points)
 
         if mode == "A/B":
             stage_durations = state.get("ab_stage_durations", {})
@@ -1236,7 +1273,29 @@ def _build_experiment_dataframe(user_name: str) -> pd.DataFrame:
             )
 
         records.append(record)
-    return pd.DataFrame(records)
+    df = pd.DataFrame(records)
+
+    if global_cursor_points:
+        (
+            total_points,
+            start_timestamp,
+            end_timestamp,
+            total_duration,
+        ) = _extract_cursor_stats(global_cursor_points)
+        summary_row = {
+            "Usuario": user_name,
+            "Modo": "Resumen total cursor",
+            "Cursor · Puntos registrados": total_points,
+            "Cursor · Inicio": start_timestamp,
+            "Cursor · Fin": end_timestamp,
+            "Cursor · Duración (s)": total_duration,
+            "Cursor · Recorrido": json.dumps(
+                global_cursor_points, ensure_ascii=False
+            ),
+        }
+        df = pd.concat([df, pd.DataFrame([summary_row])], ignore_index=True)
+
+    return df
 
 
 def _complete_visual_experiment(user_name: str) -> None:
