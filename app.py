@@ -55,12 +55,14 @@ LANGUAGE_CONTENT = {
         "error_sync_repo": "❌ Error syncing '{path}' with GitHub: {error}",
         "error_update_file": "❌ Error updating '{path}': {error}",
         "page_header": "🧠 Smart Core – Questionnaire",
-        "tab2_header": "👁️ Visual Experiment – Product Viewing Task (No Smart Score)",
+        "tab2_header": "👁️ Visual Experiment – Product Viewing Task",
         "tab2_caption": "Explore different visual layouts and pick the product you prefer in each mode.",
         "tab2_name_reused_warning": "The name you used to sign in is no longer available. Select another name to continue.",
         "tab2_requires_response_info": "To access this section, first save at least one response from the SmartScore tab.",
         "tab2_select_name_prompt": "Select your registered full name",
         "tab2_login_button": "Sign in",
+        "tab2_password_label": "Enter the password",
+        "tab2_password_error": "Incorrect password. Please try again.",
         "tab2_choose_name_info": "Select a name to view the visual experiment.",
         "tab2_logged_in_as": "Signed in as: {user}",
         "tab2_switch_user": "Switch user",
@@ -118,12 +120,14 @@ LANGUAGE_CONTENT = {
         "error_sync_repo": "❌ Error al sincronizar '{path}' con GitHub: {error}",
         "error_update_file": "❌ Error al actualizar '{path}': {error}",
         "page_header": "🧠 Smart Core – Cuestionario",
-        "tab2_header": "👁️ Experimento Visual – Tarea de Observación de Productos (Sin Smart Score)",
+        "tab2_header": "👁️ Experimento Visual – Tarea de Observación de Productos",
         "tab2_caption": "Explora diferentes presentaciones visuales y selecciona el producto que prefieras en cada modalidad.",
         "tab2_name_reused_warning": "El nombre con el que accediste ya no está disponible. Selecciona otro nombre para continuar.",
         "tab2_requires_response_info": "Para acceder a esta sección primero guarda al menos una respuesta desde la pestaña de SmartScore.",
         "tab2_select_name_prompt": "Selecciona tu nombre completo registrado",
         "tab2_login_button": "Ingresar",
+        "tab2_password_label": "Ingresa la contraseña",
+        "tab2_password_error": "Contraseña incorrecta. Intenta nuevamente.",
         "tab2_choose_name_info": "Selecciona un nombre para ver el experimento visual.",
         "tab2_logged_in_as": "Accediendo como: {user}",
         "tab2_switch_user": "Cambiar de usuario",
@@ -1978,13 +1982,24 @@ with tab2:
                 t("tab2_select_name_prompt"),
                 registered_names,
             )
+            entered_password = st.text_input(
+                t("tab2_password_label"),
+                type="password",
+            )
             login_submitted = st.form_submit_button(t("tab2_login_button"))
 
         if login_submitted:
-            st.session_state["tab2_authenticated"] = True
-            st.session_state["tab2_user_name"] = selected_name
-            _reset_visual_experiment_state()
-            _set_tab2_smartscore_map(selected_name)
+            if entered_password == "Chava":
+                st.session_state["tab2_authenticated"] = True
+                st.session_state["tab2_user_name"] = selected_name
+                _reset_visual_experiment_state()
+                _set_tab2_smartscore_map(selected_name)
+            else:
+                st.session_state["tab2_authenticated"] = False
+                st.session_state["tab2_user_name"] = ""
+                _reset_visual_experiment_state()
+                _set_tab2_smartscore_map("")
+                st.error(t("tab2_password_error"))
 
     if tab2_can_continue and not st.session_state.get("tab2_authenticated", False):
         st.info(t("tab2_choose_name_info"))
