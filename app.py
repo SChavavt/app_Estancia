@@ -201,13 +201,13 @@ INITIAL_FORM_VALUES = {
     "nombre_completo": "",
     "edad": 1,
     "genero": GENDER_KEYS[0],
-    "w_portion": 3,
-    "w_diet": 5,
-    "w_salt": 3,
-    "w_fat": 3,
-    "w_natural": 3,
-    "w_convenience": 3,
-    "w_price": 3,
+    "w_portion": 0,
+    "w_diet": 0,
+    "w_salt": 0,
+    "w_fat": 0,
+    "w_natural": 0,
+    "w_convenience": 0,
+    "w_price": 0,
 }
 
 RESET_FORM_VALUES = {
