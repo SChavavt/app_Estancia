@@ -55,6 +55,9 @@ LANGUAGE_CONTENT = {
         "error_sync_repo": "❌ Error syncing '{path}' with GitHub: {error}",
         "error_update_file": "❌ Error updating '{path}': {error}",
         "page_header": "🧠 Smart Core – Questionnaire",
+        "tab1_title": "📝 SmartScore Questionnaire",
+        "tab2_title": "👁️ Visual Experiment",
+        "tab3_title": "📊 Pupil Labs Metrics (Real Time)",
         "tab2_header": "👁️ Visual Experiment – Product Viewing Task",
         "tab2_caption": "Explore different visual layouts and pick the product you prefer in each mode.",
         "tab2_name_reused_warning": "The name you used to sign in is no longer available. Select another name to continue.",
@@ -120,6 +123,9 @@ LANGUAGE_CONTENT = {
         "error_sync_repo": "❌ Error al sincronizar '{path}' con GitHub: {error}",
         "error_update_file": "❌ Error al actualizar '{path}': {error}",
         "page_header": "🧠 Smart Core – Cuestionario",
+        "tab1_title": "📝 Cuestionario SmartScore",
+        "tab2_title": "👁️ Experimento Visual",
+        "tab3_title": "📊 Métricas Pupil Labs (Tiempo Real)",
         "tab2_header": "👁️ Experimento Visual – Tarea de Observación de Productos",
         "tab2_caption": "Explora diferentes presentaciones visuales y selecciona el producto que prefieras en cada modalidad.",
         "tab2_name_reused_warning": "El nombre con el que accediste ya no está disponible. Selecciona otro nombre para continuar.",
@@ -1712,9 +1718,9 @@ def _start_pupil_capture(endpoint: str) -> bool:
 # =========================================================
 tab1, tab2, tab3 = st.tabs(
     [
-        "📝 SmartScore Questionnaire",
-        "👁️ Experimento Visual (Sin Smart Score)",
-        "📊 Métricas Pupil Labs (Tiempo Real)",
+        t("tab1_title"),
+        t("tab2_title"),
+        t("tab3_title"),
     ]
 )
 
