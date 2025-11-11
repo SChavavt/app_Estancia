@@ -1210,7 +1210,8 @@ def _advance_visual_mode() -> None:
     mode_state = sessions.get(current_mode, {})
     if current_mode == "Sequential":
         _finalize_sequential_state(mode_state)
-    mode_state.setdefault("completion_timestamp", datetime.now())
+    if mode_state.get("completion_timestamp") is None:
+        mode_state["completion_timestamp"] = datetime.now()
     sessions[current_mode] = mode_state
     st.session_state["mode_sessions"] = sessions
     if index < len(sequence) - 1:
