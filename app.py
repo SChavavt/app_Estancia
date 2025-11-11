@@ -718,6 +718,8 @@ def _reset_visual_experiment_state() -> None:
     st.session_state["experiment_result_df"] = pd.DataFrame()
     st.session_state["last_selection_feedback"] = ""
     st.session_state["cursor_tracks"] = {}
+    st.session_state["experiment_start_time"] = None
+    st.session_state["experiment_end_time"] = None
 
 
 def _store_cursor_batch(mode: str, batch: list) -> None:
@@ -1220,6 +1222,19 @@ def _build_experiment_results(user_name: str) -> tuple[pd.DataFrame, pd.DataFram
     sequence: list = st.session_state.get("mode_sequence", [])
     sessions: dict = st.session_state.get("mode_sessions", {})
     cursor_tracks: dict = st.session_state.get("cursor_tracks", {})
+    experiment_start = st.session_state.get("experiment_start_time")
+    experiment_end = st.session_state.get("experiment_end_time")
+    experiment_start_iso = (
+        experiment_start.isoformat()
+        if isinstance(experiment_start, datetime)
+        else ""
+    )
+    experiment_end_iso = (
+        experiment_end.isoformat() if isinstance(experiment_end, datetime) else ""
+    )
+    experiment_duration = None
+    if isinstance(experiment_start, datetime) and isinstance(experiment_end, datetime):
+        experiment_duration = (experiment_end - experiment_start).total_seconds()
     records: list[dict] = []
     global_cursor_points: list[dict] = []
     for mode in sequence:
@@ -1241,6 +1256,9 @@ def _build_experiment_results(user_name: str) -> tuple[pd.DataFrame, pd.DataFram
             "Inicio del modo": start_time.isoformat() if start_time else "",
             "Momento de selección": selection_time.isoformat() if selection_time else "",
             "Momento de finalización": completion_time.isoformat() if completion_time else "",
+            "Inicio del experimento": experiment_start_iso,
+            "Fin del experimento": experiment_end_iso,
+            "Duración total experimento (s)": experiment_duration,
         }
 
         cursor_points = cursor_tracks.get(mode, [])
@@ -1337,6 +1355,8 @@ def _complete_visual_experiment(user_name: str) -> None:
             _finalize_sequential_state(mode_state)
             sessions[mode_name] = mode_state
     st.session_state["mode_sessions"] = sessions
+
+    st.session_state["experiment_end_time"] = datetime.now()
 
     summary_df, cursor_points_df = _build_experiment_results(user_name)
     VISUAL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -2029,6 +2049,8 @@ with tab2:
             st.session_state["tab2_user_name"] = selected_name
             _reset_visual_experiment_state()
             _set_tab2_smartscore_map(selected_name)
+            st.session_state["experiment_start_time"] = datetime.now()
+            st.session_state["experiment_end_time"] = None
             _trigger_streamlit_rerun()
 
         if not st.session_state.get("tab2_authenticated", False):
