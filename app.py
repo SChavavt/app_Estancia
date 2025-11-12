@@ -803,6 +803,16 @@ def _capture_cursor_movements(active_mode: str) -> None:
                 lastSent: 0,
                 initialized: false,
             });
+            function getTargetDocument() {
+                if (window.parent && window.parent.document) {
+                    try {
+                        return window.parent.document;
+                    } catch (error) {
+                        console.warn("Cursor tracker: unable to access parent document", error);
+                    }
+                }
+                return document;
+            }
             function send(force) {
                 const now = Date.now();
                 if (!force && (now - state.lastSent) < throttleMs) {
@@ -818,7 +828,8 @@ def _capture_cursor_movements(active_mode: str) -> None:
             }
             if (!state.initialized) {
                 state.initialized = true;
-                document.addEventListener("mousemove", (event) => {
+                const targetDocument = getTargetDocument();
+                const handler = (event) => {
                     state.pending.push({
                         t: Date.now(),
                         x: event.clientX,
@@ -831,8 +842,9 @@ def _capture_cursor_movements(active_mode: str) -> None:
                     } else {
                         send(false);
                     }
-                });
-                document.addEventListener("mouseleave", () => send(true));
+                };
+                targetDocument.addEventListener("mousemove", handler);
+                targetDocument.addEventListener("mouseleave", () => send(true));
                 window.addEventListener("blur", () => send(true));
                 window.addEventListener("beforeunload", () => send(true));
                 setInterval(() => send(false), throttleMs);
