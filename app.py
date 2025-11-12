@@ -1267,8 +1267,15 @@ def _build_experiment_results(user_name: str) -> tuple[pd.DataFrame, pd.DataFram
             "Tiempo hasta selección (s)": selection_duration,
             "Duración del modo (s)": mode_duration,
             "Inicio del modo": start_time.isoformat() if start_time else "",
+            "Inicio del modo (s)": start_time.timestamp() if start_time else None,
             "Momento de selección": selection_time.isoformat() if selection_time else "",
+            "Momento de selección (s)": selection_time.timestamp()
+            if selection_time
+            else None,
             "Momento de finalización": completion_time.isoformat() if completion_time else "",
+            "Momento de finalización (s)": completion_time.timestamp()
+            if completion_time
+            else None,
             "Inicio del experimento": experiment_start_iso,
             "Fin del experimento": experiment_end_iso,
             "Duración total experimento (s)": experiment_duration,
