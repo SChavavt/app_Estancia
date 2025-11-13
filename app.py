@@ -1868,12 +1868,6 @@ with tab1:
                 key="genero",
             )
 
-        grupo = st.radio(
-            "Grupo experimental",
-            ["Con SmartScore", "Sin SmartScore"],
-            key="grupo_experimental",
-        )
-
         st.subheader(t("aspects_subheader"))
         st.caption(t("aspects_caption"))
         col1, col2 = st.columns(2)
@@ -2017,7 +2011,7 @@ with tab1:
             persona_edad = int(edad)
             persona_genero = GENDER_LABELS[st.session_state["language"]][genero]
             persona_id = f"{persona_nombre}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            persona_grupo = grupo
+            persona_grupo = ""
 
             st.session_state["tab1_persona_id"] = persona_id
             st.session_state["tab1_persona_group"] = persona_grupo
@@ -2058,7 +2052,7 @@ with tab1:
                         [
                             {
                                 "ID_Participante": persona_id,
-                                "Grupo_Experimental": persona_grupo,
+                                "Grupo_Experimental": "",
                                 "Nombre Completo": persona_nombre,
                                 "Edad": persona_edad,
                                 "Género": persona_genero,
@@ -2165,9 +2159,9 @@ with tab2:
             participant_id, participant_group = _lookup_participant_metadata(selected_name)
             if not participant_id:
                 participant_id = st.session_state.get("tab1_persona_id", "")
-            if not participant_group:
-                participant_group = st.session_state.get("tab1_persona_group", "")
-            st.session_state["tab2_user_id"] = participant_id
+            persona_id = participant_id
+            participant_group = ""
+            st.session_state["tab2_user_id"] = persona_id
             st.session_state["tab2_user_group"] = participant_group
             _reset_visual_experiment_state()
             _set_tab2_smartscore_map(selected_name)
