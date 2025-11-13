@@ -2497,3 +2497,60 @@ with tab_admin:
             )
         else:
             st.error("Ocurrió un error durante la asignación de grupos.")
+
+import pandas as pd
+import numpy as np
+from pathlib import Path
+
+
+def asignar_grupos_experimentales():
+    try:
+        ruta = Path("Resultados_SmartScore.xlsx")
+        if not ruta.exists():
+            return {"status": "error", "msg": "Archivo no encontrado"}
+
+        df = pd.read_excel(ruta)
+
+        # Asegurar columnas necesarias
+        columnas_minimas = ["Nombre Completo", "Edad", "Género", "Grupo_Experimental"]
+        for c in columnas_minimas:
+            if c not in df.columns:
+                return {"status": "error", "msg": f"Falta columna: {c}"}
+
+        # Eliminar registros sin edad/género
+        df_clean = df.dropna(subset=["Edad", "Género"]).copy()
+
+        # Convertir género a categorías
+        df_clean["Género"] = df_clean["Género"].astype(str).str.upper()
+
+        # Mezclar aleatoriamente
+        df_clean = df_clean.sample(frac=1, random_state=42).reset_index(drop=True)
+
+        # Estratificación por género y cuartiles de edad
+        df_clean["Edad_Cuartil"] = pd.qcut(df_clean["Edad"], 4, labels=False)
+
+        grupos = []
+
+        for (genero, cuartil), group in df_clean.groupby(["Género", "Edad_Cuartil"]):
+            n = len(group)
+            mitad = n // 2
+            indices = group.index.tolist()
+
+            for i, idx in enumerate(indices):
+                if i < mitad:
+                    grupos.append((idx, "Con SmartScore"))
+                else:
+                    grupos.append((idx, "Sin SmartScore"))
+
+        # Aplicar resultados
+        asignacion = dict(grupos)
+        df["Grupo_Experimental"] = df.index.map(lambda x: asignacion.get(x, df["Grupo_Experimental"].iloc[x]))
+
+        # Guardar
+        df.to_excel(ruta, index=False)
+
+        return {"status": "ok", "archivo": str(ruta)}
+
+    except Exception as e:
+        return {"status": "error", "msg": str(e)}
+
