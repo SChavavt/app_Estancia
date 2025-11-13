@@ -2282,6 +2282,9 @@ with tab2:
 
             tab2_can_continue = False
 
+    selection_made = False
+    is_last_mode = True
+
     if tab2_can_continue:
         total_modes = len(sequence)
         current_index = st.session_state.get("current_mode_index", 0)
@@ -2308,6 +2311,8 @@ with tab2:
         ab_stage = current_state.get("ab_stage", 0)
         ab_finalists = current_state.get("ab_final_options", [])
         stage_messages = []
+
+        next_clicked = False
 
         if current_mode == "A/B" and len(images) >= 4:
             _ensure_ab_stage_started(current_state)
@@ -2492,16 +2497,15 @@ with tab2:
                     st.session_state["mode_sessions"] = mode_sessions
                     st.session_state["last_selection_feedback"] = current_image.stem
                     _trigger_streamlit_rerun()
+                if next_clicked:
+                    new_index = min(total_images - 1, index + 1)
+                    _record_seq_navigation(current_state, new_index, "next")
+                    mode_sessions[current_mode] = current_state
+                    st.session_state["mode_sessions"] = mode_sessions
+                    _trigger_streamlit_rerun()
 
-        if next_clicked:
-            new_index = min(total_images - 1, index + 1)
-            _record_seq_navigation(current_state, new_index, "next")
-            mode_sessions[current_mode] = current_state
-            st.session_state["mode_sessions"] = mode_sessions
-            _trigger_streamlit_rerun()
-
-    selection_made = bool(current_state.get("selected"))
-    is_last_mode = current_index == total_modes - 1
+        selection_made = bool(current_state.get("selected"))
+        is_last_mode = current_index == total_modes - 1
 
     if not selection_made:
         st.info(t("tab2_select_to_continue"))
