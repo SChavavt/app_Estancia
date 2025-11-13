@@ -1278,6 +1278,12 @@ def _build_experiment_results(user_name: str) -> tuple[pd.DataFrame, pd.DataFram
             else None,
             "Inicio del experimento": experiment_start_iso,
             "Fin del experimento": experiment_end_iso,
+            "Inicio experimento (s)": experiment_start.timestamp()
+            if isinstance(experiment_start, datetime)
+            else None,
+            "Fin experimento (s)": experiment_end.timestamp()
+            if isinstance(experiment_end, datetime)
+            else None,
             "Duración total experimento (s)": experiment_duration,
         }
 
