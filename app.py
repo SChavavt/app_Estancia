@@ -2489,6 +2489,8 @@ with tab_admin:
     st.caption("Asignación automática de grupos experimentales equilibrados.")
     st.subheader("Asignación automática de grupos experimentales")
 
+    # Nota: la implementación de asignar_grupos_experimentales() se agregará posteriormente.
+
     if st.button("⚖️ Ejecutar asignación equilibrada"):
         resultado = asignar_grupos_experimentales()
         if resultado["status"] == "ok":
