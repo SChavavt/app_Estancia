@@ -215,6 +215,7 @@ INITIAL_FORM_VALUES = {
     "nombre_completo": "",
     "edad": 1,
     "genero": GENDER_KEYS[0],
+    "grupo_experimental": "Con SmartScore",
     "w_portion": 0,
     "w_diet": 0,
     "w_salt": 0,
@@ -228,6 +229,7 @@ RESET_FORM_VALUES = {
     "nombre_completo": "",
     "edad": 1,
     "genero": GENDER_KEYS[0],
+    "grupo_experimental": "Con SmartScore",
     "w_portion": 0,
     "w_diet": 0,
     "w_salt": 0,
@@ -247,6 +249,10 @@ st.session_state.setdefault("visual_log", [])
 st.session_state.setdefault("tab2_authenticated", False)
 st.session_state.setdefault("tab2_password_unlocked", False)
 st.session_state.setdefault("tab2_user_name", "")
+st.session_state.setdefault("tab1_persona_id", "")
+st.session_state.setdefault("tab1_persona_group", "")
+st.session_state.setdefault("tab2_user_id", "")
+st.session_state.setdefault("tab2_user_group", "")
 st.session_state.setdefault("tab2_smartscore_map", {})
 st.session_state.setdefault("tab2_smartscore_owner", "")
 st.session_state.setdefault("cursor_tracks", {})
@@ -461,6 +467,46 @@ def _load_user_smartscore_map(user_name: str) -> dict[str, float]:
     return resultados
 
 
+def _lookup_participant_metadata(user_name: str) -> tuple[str, str]:
+    cleaned = user_name.strip()
+    if not cleaned:
+        return "", ""
+
+    results_path = Path(RESULTS_PATH_IN_REPO)
+    if not results_path.exists():
+        return "", ""
+
+    try:
+        df = pd.read_excel(results_path)
+    except Exception:
+        return "", ""
+
+    if "Nombre Completo" not in df.columns:
+        return "", ""
+
+    nombres = df["Nombre Completo"].astype(str).str.strip()
+    mask = nombres.str.casefold() == cleaned.casefold()
+    if not mask.any():
+        return "", ""
+
+    fila = df[mask].iloc[-1]
+
+    participant_id = fila.get("ID_Participante", "")
+    participant_group = fila.get("Grupo_Experimental", "")
+
+    if pd.isna(participant_id):
+        participant_id = ""
+    else:
+        participant_id = str(participant_id)
+
+    if pd.isna(participant_group):
+        participant_group = ""
+    else:
+        participant_group = str(participant_group)
+
+    return participant_id, participant_group
+
+
 def _set_tab2_smartscore_map(user_name: str) -> None:
     cleaned = user_name.strip()
     if not cleaned:
@@ -555,7 +601,13 @@ def normalize_minmax(series: pd.Series) -> pd.Series:
 
 def _reorder_person_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Coloca Nombre/Edad/Género al inicio y elimina 'Usuario' si aparece."""
-    columnas_inicio = ["Nombre Completo", "Edad", "Género"]
+    columnas_inicio = [
+        "ID_Participante",
+        "Grupo_Experimental",
+        "Nombre Completo",
+        "Edad",
+        "Género",
+    ]
     presentes = [col for col in columnas_inicio if col in df.columns]
     restantes = [col for col in df.columns if col not in presentes and col != "Usuario"]
     df_reordenado = df[presentes + restantes]
@@ -1231,7 +1283,9 @@ def _advance_visual_mode() -> None:
     _trigger_streamlit_rerun()
 
 
-def _build_experiment_results(user_name: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+def _build_experiment_results(
+    user_name: str, user_id: str, user_group: str
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     sequence: list = st.session_state.get("mode_sequence", [])
     sessions: dict = st.session_state.get("mode_sessions", {})
     cursor_tracks: dict = st.session_state.get("cursor_tracks", {})
@@ -1261,6 +1315,9 @@ def _build_experiment_results(user_name: str) -> tuple[pd.DataFrame, pd.DataFram
             mode_duration = (completion_time - start_time).total_seconds()
         record = {
             "Usuario": user_name,
+            "ID_Participante": user_id or st.session_state.get("tab2_user_id", ""),
+            "Grupo_Experimental": user_group
+            or st.session_state.get("tab2_user_group", ""),
             "Modo": mode,
             "Opciones Presentadas": ", ".join(state.get("options", [])),
             "Producto Seleccionado": state.get("selected") or "",
@@ -1348,6 +1405,9 @@ def _build_experiment_results(user_name: str) -> tuple[pd.DataFrame, pd.DataFram
         ) = _extract_cursor_stats(global_cursor_points)
         summary_row = {
             "Usuario": user_name,
+            "ID_Participante": user_id or st.session_state.get("tab2_user_id", ""),
+            "Grupo_Experimental": user_group
+            or st.session_state.get("tab2_user_group", ""),
             "Modo": "Resumen total cursor",
             "Cursor · Puntos registrados": total_points,
             "Cursor · Inicio": start_timestamp,
@@ -1360,6 +1420,14 @@ def _build_experiment_results(user_name: str) -> tuple[pd.DataFrame, pd.DataFram
         summary_df = pd.concat(
             [summary_df, pd.DataFrame([summary_row])], ignore_index=True
         )
+
+    participant_id = user_id or st.session_state.get("tab2_user_id", "")
+    participant_group = user_group or st.session_state.get("tab2_user_group", "")
+
+    if not cursor_points_df.empty:
+        cursor_points_df["Usuario"] = user_name
+        cursor_points_df["ID_Participante"] = participant_id
+        cursor_points_df["Grupo_Experimental"] = participant_group
 
     return summary_df, cursor_points_df
 
@@ -1384,7 +1452,11 @@ def _complete_visual_experiment(user_name: str) -> None:
 
     st.session_state["experiment_end_time"] = datetime.now()
 
-    summary_df, cursor_points_df = _build_experiment_results(user_name)
+    summary_df, cursor_points_df = _build_experiment_results(
+        user_name,
+        st.session_state.get("tab2_user_id", ""),
+        st.session_state.get("tab2_user_group", ""),
+    )
     VISUAL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_name = _sanitize_filename_component(user_name)
@@ -1796,6 +1868,12 @@ with tab1:
                 key="genero",
             )
 
+        grupo = st.radio(
+            "Grupo experimental",
+            ["Con SmartScore", "Sin SmartScore"],
+            key="grupo_experimental",
+        )
+
         st.subheader(t("aspects_subheader"))
         st.caption(t("aspects_caption"))
         col1, col2 = st.columns(2)
@@ -1938,6 +2016,11 @@ with tab1:
             persona_nombre = nombre_completo.strip()
             persona_edad = int(edad)
             persona_genero = GENDER_LABELS[st.session_state["language"]][genero]
+            persona_id = f"{persona_nombre}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            persona_grupo = grupo
+
+            st.session_state["tab1_persona_id"] = persona_id
+            st.session_state["tab1_persona_group"] = persona_grupo
 
             if "GITHUB_TOKEN" not in st.secrets:
                 st.warning(t("warning_github_token"))
@@ -1974,6 +2057,8 @@ with tab1:
                     nuevo_registro = pd.DataFrame(
                         [
                             {
+                                "ID_Participante": persona_id,
+                                "Grupo_Experimental": persona_grupo,
                                 "Nombre Completo": persona_nombre,
                                 "Edad": persona_edad,
                                 "Género": persona_genero,
@@ -2026,6 +2111,8 @@ with tab2:
         st.warning(t("tab2_name_reused_warning"))
         st.session_state["tab2_authenticated"] = False
         st.session_state["tab2_user_name"] = ""
+        st.session_state["tab2_user_id"] = ""
+        st.session_state["tab2_user_group"] = ""
         _set_tab2_smartscore_map("")
 
     if not registered_names:
@@ -2047,6 +2134,8 @@ with tab2:
                 st.session_state["tab2_password_unlocked"] = True
                 st.session_state["tab2_authenticated"] = False
                 st.session_state["tab2_user_name"] = ""
+                st.session_state["tab2_user_id"] = ""
+                st.session_state["tab2_user_group"] = ""
                 _reset_visual_experiment_state()
                 _set_tab2_smartscore_map("")
                 _trigger_streamlit_rerun()
@@ -2073,6 +2162,13 @@ with tab2:
         if start_clicked:
             st.session_state["tab2_authenticated"] = True
             st.session_state["tab2_user_name"] = selected_name
+            participant_id, participant_group = _lookup_participant_metadata(selected_name)
+            if not participant_id:
+                participant_id = st.session_state.get("tab1_persona_id", "")
+            if not participant_group:
+                participant_group = st.session_state.get("tab1_persona_group", "")
+            st.session_state["tab2_user_id"] = participant_id
+            st.session_state["tab2_user_group"] = participant_group
             _reset_visual_experiment_state()
             _set_tab2_smartscore_map(selected_name)
             st.session_state["experiment_start_time"] = datetime.now()
@@ -2091,6 +2187,8 @@ with tab2:
         if st.button(t("tab2_switch_user"), key="tab2_logout"):
             st.session_state["tab2_authenticated"] = False
             st.session_state["tab2_user_name"] = ""
+            st.session_state["tab2_user_id"] = ""
+            st.session_state["tab2_user_group"] = ""
             _reset_visual_experiment_state()
             _set_tab2_smartscore_map("")
             _trigger_streamlit_rerun()
