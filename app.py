@@ -2487,3 +2487,13 @@ with tab2:
 with tab_admin:
     st.header("🛠️ Panel de Administración")
     st.caption("Asignación automática de grupos experimentales equilibrados.")
+    st.subheader("Asignación automática de grupos experimentales")
+
+    if st.button("⚖️ Ejecutar asignación equilibrada"):
+        resultado = asignar_grupos_experimentales()
+        if resultado["status"] == "ok":
+            st.success(
+                f"Grupos asignados correctamente. Archivo actualizado: {resultado['archivo']}"
+            )
+        else:
+            st.error("Ocurrió un error durante la asignación de grupos.")
