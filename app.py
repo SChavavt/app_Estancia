@@ -507,6 +507,43 @@ def _lookup_participant_metadata(user_name: str) -> tuple[str, str]:
     return participant_id, participant_group
 
 
+def get_user_group(user_name: str) -> str:
+    cleaned = (user_name or "").strip()
+    if not cleaned:
+        return ""
+
+    if "GITHUB_TOKEN" not in st.secrets:
+        return ""
+
+    try:
+        github_client = Github(st.secrets["GITHUB_TOKEN"])
+        github_user = github_client.get_user()
+        repo = github_user.get_repo("app_Estancia")
+        contents = repo.get_contents(RESULTS_PATH_IN_REPO)
+        excel_bytes = base64.b64decode(contents.content)
+        df = pd.read_excel(BytesIO(excel_bytes))
+    except GithubException:
+        return ""
+    except Exception:
+        return ""
+
+    required_columns = {"Nombre Completo", "Grupo_Experimental"}
+    if not required_columns.issubset(df.columns):
+        return ""
+
+    nombres = df["Nombre Completo"].astype(str).str.strip().str.casefold()
+    mask = nombres == cleaned.casefold()
+    if not mask.any():
+        return ""
+
+    grupo_valor = df.loc[mask, "Grupo_Experimental"].iloc[-1]
+    if pd.isna(grupo_valor):
+        return ""
+
+    grupo_str = str(grupo_valor).strip()
+    return grupo_str
+
+
 def _set_tab2_smartscore_map(user_name: str) -> None:
     cleaned = user_name.strip()
     if not cleaned:
@@ -2160,9 +2197,11 @@ with tab2:
             if not participant_id:
                 participant_id = st.session_state.get("tab1_persona_id", "")
             persona_id = participant_id
-            participant_group = ""
+            grupo = get_user_group(selected_name)
+            if not grupo:
+                grupo = participant_group
             st.session_state["tab2_user_id"] = persona_id
-            st.session_state["tab2_user_group"] = participant_group
+            st.session_state["tab2_user_group"] = grupo
             _reset_visual_experiment_state()
             _set_tab2_smartscore_map(selected_name)
             st.session_state["experiment_start_time"] = datetime.now()
