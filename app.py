@@ -2493,57 +2493,51 @@ with tab2:
                     st.session_state["last_selection_feedback"] = current_image.stem
                     _trigger_streamlit_rerun()
 
-                if next_clicked:
-                    new_index = min(total_images - 1, index + 1)
-                    _record_seq_navigation(current_state, new_index, "next")
-                    mode_sessions[current_mode] = current_state
-                    st.session_state["mode_sessions"] = mode_sessions
-                    _trigger_streamlit_rerun()
+        if next_clicked:
+            new_index = min(total_images - 1, index + 1)
+            _record_seq_navigation(current_state, new_index, "next")
+            mode_sessions[current_mode] = current_state
+            st.session_state["mode_sessions"] = mode_sessions
+            _trigger_streamlit_rerun()
 
-        selection_made = bool(current_state.get("selected"))
-        is_last_mode = current_index == total_modes - 1
+    selection_made = bool(current_state.get("selected"))
+    is_last_mode = current_index == total_modes - 1
 
-        if not selection_made:
-            st.info(t("tab2_select_to_continue"))
+    if not selection_made:
+        st.info(t("tab2_select_to_continue"))
 
-        if not is_last_mode:
-            if st.button(
-                t("tab2_next_mode"),
-                key=f"next_mode_{current_mode}",
-                disabled=not selection_made,
-            ):
-                _advance_visual_mode()
-        else:
-            if st.button(
-                t("tab2_finish_experiment"),
-                key="finish_experiment",
-                disabled=not selection_made,
-            ):
-                _complete_visual_experiment(usuario_activo)
-                _trigger_streamlit_rerun()
-
-with tab_admin:
-    st.header("🛠️ Panel de Administración")
-    st.caption("Asignación automática de grupos experimentales equilibrados.")
-    st.subheader("Asignación automática de grupos experimentales")
-
-    if st.button("⚖️ Ejecutar asignación equilibrada"):
-        resultado = asignar_grupos_experimentales()
-        if resultado["status"] == "ok":
-            st.success("Grupos asignados correctamente en GitHub.")
-        else:
-            st.error(
-                resultado.get(
-                    "msg", "Ocurrió un error durante la asignación de grupos."
-                )
-            )
-
-import pandas as pd
-import numpy as np
-from pathlib import Path
+    if not is_last_mode:
+        if st.button(
+            t("tab2_next_mode"),
+            key=f"next_mode_{current_mode}",
+            disabled=not selection_made,
+        ):
+            _advance_visual_mode()
+    else:
+        if st.button(
+            t("tab2_finish_experiment"),
+            key="finish_experiment",
+            disabled=not selection_made,
+        ):
+            _complete_visual_experiment(usuario_activo)
+            _trigger_streamlit_rerun()
 
 
 def asignar_grupos_experimentales():
+    def _normalizar_genero(valor: str) -> str:
+        genero = (
+            unicodedata.normalize("NFKD", str(valor))
+            .encode("ascii", "ignore")
+            .decode("ascii")
+            .strip()
+            .upper()
+        )
+        if genero in {"M", "MALE", "HOMBRE", "MASCULINO"}:
+            return "MASCULINO"
+        if genero in {"F", "FEMALE", "MUJER", "FEMENINO", "FEMENINA"}:
+            return "FEMENINO"
+        return "OTRO"
+
     if "GITHUB_TOKEN" not in st.secrets:
         return {"status": "error", "msg": "Falta configurar GITHUB_TOKEN."}
 
@@ -2586,11 +2580,13 @@ def asignar_grupos_experimentales():
             return {"status": "error", "msg": f"No se pudo leer el archivo: {read_error}"}
 
         columnas_minimas = ["Nombre Completo", "Edad", "Género", "Grupo_Experimental"]
-        for c in columnas_minimas:
-            if c not in df.columns:
-                return {"status": "error", "msg": f"Falta columna: {c}"}
+        for columna in columnas_minimas:
+            if columna not in df.columns:
+                return {"status": "error", "msg": f"Falta columna: {columna}"}
 
         df_clean = df.dropna(subset=["Edad", "Género"]).copy()
+        df_clean.loc[:, "Edad"] = pd.to_numeric(df_clean["Edad"], errors="coerce")
+        df_clean = df_clean.dropna(subset=["Edad"]).copy()
 
         if df_clean.empty:
             return {
@@ -2598,15 +2594,14 @@ def asignar_grupos_experimentales():
                 "msg": "No hay registros válidos para asignar grupos.",
             }
 
-        df_clean["Género"] = df_clean["Género"].astype(str).str.upper()
+        df_clean.loc[:, "Género_Normalizado"] = df_clean["Género"].map(_normalizar_genero)
 
-        max_cuartiles = min(4, len(df_clean))
-
+        max_cuartiles = min(4, df_clean["Edad"].nunique())
         if max_cuartiles <= 1:
-            df_clean["Edad_Cuartil"] = 0
+            df_clean.loc[:, "Edad_Cuartil"] = 0
         else:
             try:
-                df_clean["Edad_Cuartil"] = pd.qcut(
+                df_clean.loc[:, "Edad_Cuartil"] = pd.qcut(
                     df_clean["Edad"],
                     q=max_cuartiles,
                     labels=False,
@@ -2614,7 +2609,7 @@ def asignar_grupos_experimentales():
                 )
             except ValueError:
                 df_clean = df_clean.sort_values("Edad").reset_index()
-                df_clean["Edad_Cuartil"] = pd.cut(
+                df_clean.loc[:, "Edad_Cuartil"] = pd.cut(
                     np.arange(len(df_clean)),
                     bins=max_cuartiles,
                     labels=False,
@@ -2622,19 +2617,49 @@ def asignar_grupos_experimentales():
                 )
                 df_clean = df_clean.set_index("index")
 
-        df_clean["Edad_Cuartil"] = df_clean["Edad_Cuartil"].astype(int)
-
-        df_clean = df_clean.sample(frac=1, random_state=42)
+        df_clean.loc[:, "Edad_Cuartil"] = df_clean["Edad_Cuartil"].astype(int)
 
         asignacion: dict[int, str] = {}
+        con_indices: list[int] = []
+        sin_indices: list[int] = []
+        rng = random.Random(42)
 
-        for (genero, cuartil), group in df_clean.groupby(["Género", "Edad_Cuartil"]):
+        for (genero, cuartil), group in df_clean.groupby(
+            ["Género_Normalizado", "Edad_Cuartil"],
+            sort=True,
+        ):
             indices = list(group.index)
             if not indices:
                 continue
-            mitad = len(indices) // 2
-            for i, idx in enumerate(indices):
-                asignacion[idx] = "Con SmartScore" if i < mitad else "Sin SmartScore"
+
+            rng.shuffle(indices)
+            base = len(indices) // 2
+            con_count = base
+            sin_count = base
+
+            if len(indices) % 2:
+                if len(con_indices) <= len(sin_indices):
+                    con_count += 1
+                else:
+                    sin_count += 1
+
+            for idx in indices[:con_count]:
+                asignacion[idx] = "Con SmartScore"
+                con_indices.append(idx)
+
+            for idx in indices[con_count : con_count + sin_count]:
+                asignacion[idx] = "Sin SmartScore"
+                sin_indices.append(idx)
+
+        while abs(len(con_indices) - len(sin_indices)) > 1:
+            if len(con_indices) > len(sin_indices):
+                idx = con_indices.pop()
+                asignacion[idx] = "Sin SmartScore"
+                sin_indices.append(idx)
+            else:
+                idx = sin_indices.pop()
+                asignacion[idx] = "Con SmartScore"
+                con_indices.append(idx)
 
         for idx, grupo in asignacion.items():
             df.at[idx, "Grupo_Experimental"] = grupo
@@ -2665,3 +2690,19 @@ def asignar_grupos_experimentales():
         "msg": "Conflicto al guardar los cambios en GitHub tras múltiples intentos.",
     }
 
+
+with tab_admin:
+    st.header("🛠️ Panel de Administración")
+    st.caption("Asignación automática de grupos experimentales equilibrados.")
+    st.subheader("Asignación automática de grupos experimentales")
+
+    if st.button("⚖️ Ejecutar asignación equilibrada"):
+        resultado = asignar_grupos_experimentales()
+        if resultado["status"] == "ok":
+            st.success("Grupos asignados correctamente en GitHub.")
+        else:
+            st.error(
+                resultado.get(
+                    "msg", "Ocurrió un error durante la asignación de grupos."
+                )
+            )
