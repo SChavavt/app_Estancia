@@ -2599,13 +2599,29 @@ def asignar_grupos_experimentales():
 
         df_clean["Género"] = df_clean["Género"].astype(str).str.upper()
 
-        try:
-            df_clean["Edad_Cuartil"] = pd.qcut(df_clean["Edad"], 4, labels=False)
-        except ValueError as q_error:
-            return {
-                "status": "error",
-                "msg": f"No se pudieron calcular los cuartiles de edad: {q_error}",
-            }
+        max_cuartiles = min(4, len(df_clean))
+
+        if max_cuartiles <= 1:
+            df_clean["Edad_Cuartil"] = 0
+        else:
+            try:
+                df_clean["Edad_Cuartil"] = pd.qcut(
+                    df_clean["Edad"],
+                    q=max_cuartiles,
+                    labels=False,
+                    duplicates="drop",
+                )
+            except ValueError:
+                df_clean = df_clean.sort_values("Edad").reset_index()
+                df_clean["Edad_Cuartil"] = pd.cut(
+                    np.arange(len(df_clean)),
+                    bins=max_cuartiles,
+                    labels=False,
+                    include_lowest=True,
+                )
+                df_clean = df_clean.set_index("index")
+
+        df_clean["Edad_Cuartil"] = df_clean["Edad_Cuartil"].astype(int)
 
         df_clean = df_clean.sample(frac=1, random_state=42)
 
