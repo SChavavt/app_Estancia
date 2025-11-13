@@ -1542,19 +1542,23 @@ def _render_visual_image(
     if extension == "jpg":
         extension = "jpeg"
     caption = html.escape(image_path.stem.replace("_", " "))
-    smartscore_map: dict[str, float] = st.session_state.get("tab2_smartscore_map", {})
-    smartscore_entry = _find_smartscore_for_image(image_path.stem, smartscore_map)
     smartscore_html = ""
-    if smartscore_entry and highlighted_product and (
-        smartscore_entry[0] == highlighted_product
-    ):
-        _, score_value = smartscore_entry
-        smartscore_html = (
-            "<div class=\"smartscore-label\">"
-            "<span class=\"smartscore-star\" aria-hidden=\"true\">⭐</span>"
-            f"<span class=\"smartscore-text\">{t('smartscore_recommended', score=score_value * 100)}</span>"
-            "</div>"
-        )
+    grupo = st.session_state.get("tab2_user_group", "")
+    mostrar_smartscore = grupo == "Con SmartScore"
+
+    if mostrar_smartscore:
+        smartscore_map: dict[str, float] = st.session_state.get("tab2_smartscore_map", {})
+        smartscore_entry = _find_smartscore_for_image(image_path.stem, smartscore_map)
+        if smartscore_entry and highlighted_product and (
+            smartscore_entry[0] == highlighted_product
+        ):
+            _, score_value = smartscore_entry
+            smartscore_html = (
+                "<div class=\"smartscore-label\">"
+                "<span class=\"smartscore-star\" aria-hidden=\"true\">⭐</span>"
+                f"<span class=\"smartscore-text\">{t('smartscore_recommended', score=score_value * 100)}</span>"
+                "</div>"
+            )
     st.markdown(
         f"""
         <div class="tab2-image-container {mode_class}">
