@@ -1358,6 +1358,7 @@ def _build_experiment_results(
             or st.session_state.get("tab2_user_group", ""),
             "Modo": mode,
             "Opciones Presentadas": ", ".join(state.get("options", [])),
+            "Archivos presentados": ", ".join([p.name for p in state.get("images", [])]),
             "Producto Seleccionado": state.get("selected") or "",
             "Tiempo hasta selección (s)": selection_duration,
             "Duración del modo (s)": mode_duration,
