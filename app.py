@@ -1839,11 +1839,11 @@ def _start_pupil_capture(endpoint: str) -> bool:
 # =========================================================
 # INTERFACES
 # =========================================================
-tab1, tab2, tab3 = st.tabs(
+tab1, tab2, tab_admin = st.tabs(
     [
         t("tab1_title"),
         t("tab2_title"),
-        t("tab3_title"),
+        "🛠️ Admin",
     ]
 )
 
@@ -2484,150 +2484,6 @@ with tab2:
                 _complete_visual_experiment(usuario_activo)
                 _trigger_streamlit_rerun()
 
-with tab3:
-    _initialize_pupil_session_state()
-
-    st.header("📊 Métricas Pupil Labs (Tiempo Real)")
-    st.caption(
-        "Monitoreo en vivo de datos de mirada y confianza registrados desde Pupil Service."
-    )
-
-    connection_labels = list(PUPIL_CONNECTION_OPTIONS.keys())
-    default_label = st.session_state.get("pupil_connection_mode", connection_labels[0])
-    if default_label not in connection_labels:
-        default_label = connection_labels[0]
-
-    selected_mode = st.radio(
-        "🌐 Modo de conexión",
-        connection_labels,
-        index=connection_labels.index(default_label),
-        key="pupil_connection_mode",
-    )
-
-    endpoint = PUPIL_CONNECTION_OPTIONS[selected_mode]
-    st.session_state["pupil_endpoint"] = endpoint
-
-    controls_col1, controls_col2, controls_col3 = st.columns(3)
-
-    with controls_col1:
-        start_capture = st.button(
-            "▶️ Iniciar captura",
-            use_container_width=True,
-            disabled=st.session_state.get("pupil_capturing", False),
-        )
-    with controls_col2:
-        stop_capture = st.button(
-            "⏹ Detener captura",
-            use_container_width=True,
-            disabled=not st.session_state.get("pupil_capturing", False),
-        )
-
-    metrics_placeholder = st.empty()
-    st.session_state["pupil_metrics_placeholder"] = metrics_placeholder
-
-    if start_capture:
-        st.session_state["pupil_last_attempt"] = {
-            "endpoint": endpoint,
-            "timestamp": datetime.now().isoformat(timespec="seconds"),
-        }
-        st.session_state["pupil_last_error"] = None
-        st.session_state["pupil_last_status"] = "connecting"
-        if st.session_state.get("pupil_capturing"):
-            _stop_pupil_capture()
-        if not _start_pupil_capture(endpoint):
-            _stop_pupil_capture()
-            st.session_state["pupil_last_status"] = "error"
-            st.session_state["pupil_last_error"] = (
-                "Sin datos: no hubo respuesta de Pupil Service en el endpoint seleccionado."
-            )
-            st.warning(
-                "⚠️ No se pudo conectar a Pupil Service. Verifica que Pupil Capture esté activo, que el puerto 50020 esté abierto y que usas el modo correcto."
-            )
-        else:
-            st.session_state["pupil_last_status"] = "capturing"
-
-    if stop_capture:
-        _stop_pupil_capture()
-        st.session_state["pupil_last_error"] = None
-
-    if st.session_state.get("pupil_capturing"):
-        st.success(f"Recibiendo métricas desde tcp://{endpoint}")
-    else:
-        last_attempt = st.session_state.get("pupil_last_attempt")
-        base_message = "Captura detenida. Usa el botón de iniciar para reconectar."
-        if last_attempt:
-            base_message = (
-                f"Captura detenida. Último intento: tcp://{last_attempt['endpoint']} a las {last_attempt['timestamp']}."
-            )
-        st.info(base_message)
-        last_error = st.session_state.get("pupil_last_error")
-        if last_error:
-            st.warning(
-                f"{last_error} Revisa que Pupil Capture esté corriendo y conectado a la misma red."
-            )
-        st.markdown(
-            """
-            **Para ver métricas aquí:**
-
-            1. Abre Pupil Capture/Pupil Service y asegúrate de que el stream esté activo.
-            2. Comprueba que la dirección seleccionada coincide con la máquina que emite los datos.
-            3. Pulsa **Iniciar captura** y espera a que lleguen paquetes en el tópico `gaze.3d.01`.
-            """
-        )
-
-    with controls_col3:
-        metrics_available = bool(st.session_state.get("pupil_metrics"))
-        usuario = (
-            st.session_state.get("tab2_user_name")
-            or st.session_state.get("nombre_completo")
-            or "usuario"
-        )
-        safe_user = re.sub(r"[^A-Za-z0-9_-]+", "_", usuario.strip()) or "usuario"
-        if metrics_available:
-            df_metrics = pd.DataFrame(st.session_state["pupil_metrics"])
-            data_path = Path("data") / f"pupil_metrics_{safe_user}.xlsx"
-            data_path.parent.mkdir(parents=True, exist_ok=True)
-            df_metrics.to_excel(data_path, index=False)
-            excel_buffer = BytesIO()
-            df_metrics.to_excel(excel_buffer, index=False)
-            excel_buffer.seek(0)
-            st.download_button(
-                "💾 Descargar métricas",
-                data=excel_buffer.getvalue(),
-                file_name=f"pupil_metrics_{safe_user}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-            )
-        else:
-            st.download_button(
-                "💾 Descargar métricas",
-                data=b"",
-                file_name="pupil_metrics_usuario.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-                disabled=True,
-            )
-
-    if not st.session_state.get("pupil_capturing"):
-        lock: threading.Lock = st.session_state["pupil_metrics_lock"]
-        with lock:
-            recent_metrics = st.session_state["pupil_metrics"][-10:]
-        if recent_metrics:
-            df_recent = pd.DataFrame(recent_metrics)
-            display_columns = [
-                col
-                for col in [
-                    "timestamp",
-                    "relative_time",
-                    "norm_pos_x",
-                    "norm_pos_y",
-                    "confidence",
-                    "user_name",
-                ]
-                if col in df_recent.columns
-            ]
-            metrics_placeholder.dataframe(df_recent[display_columns])
-        else:
-            metrics_placeholder.info(
-                "Aún no hay métricas registradas. Inicia la captura y verifica que el stream de Pupil Service envíe datos."
-            )
+with tab_admin:
+    st.header("🛠️ Panel de Administración")
+    st.caption("Asignación automática de grupos experimentales equilibrados.")
