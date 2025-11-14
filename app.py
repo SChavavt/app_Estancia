@@ -1374,6 +1374,38 @@ def obtener_aoi_layout(state, modo):
     return aoi_dict
 
 
+def calcular_atencion_recomendado(aois, gaze_data, recomendado):
+    # aois es el dict generado en AOIs
+    # gaze_data viene de state.get("gaze_history", [])
+    if not recomendado or recomendado not in aois:
+        return {"tiempo": None, "fijaciones": None, "primera_mirada": None}
+
+    x1, y1, x2, y2 = aois[recomendado]
+
+    tiempo = 0
+    fijaciones = 0
+    primera = None
+
+    for g in gaze_data:
+        ts = g["t"]
+        x = g["x"]
+        y = g["y"]
+
+        dentro = x >= x1 and x <= x2 and y >= y1 and y <= y2
+
+        if dentro:
+            tiempo += g.get("dt", 0)
+            fijaciones += 1
+            if primera is None:
+                primera = ts
+
+    return {
+        "tiempo": tiempo,
+        "fijaciones": fijaciones,
+        "primera_mirada": primera,
+    }
+
+
 def obtener_layout_modo(modo, state):
     if modo == "A/B":
         return "AB-2col"
@@ -1406,6 +1438,7 @@ def _build_experiment_results(
     if isinstance(experiment_start, datetime) and isinstance(experiment_end, datetime):
         experiment_duration = (experiment_end - experiment_start).total_seconds()
     records: list[dict] = []
+    participant_group = user_group or st.session_state.get("tab2_user_group", "")
     global_cursor_points: list[dict] = []
     for mode in sequence:
         state = sessions.get(mode, {})
@@ -1416,11 +1449,11 @@ def _build_experiment_results(
         mode_duration = None
         if start_time and completion_time:
             mode_duration = (completion_time - start_time).total_seconds()
+        recomendado = state.get("producto_recomendado")
         record = {
             "Usuario": user_name,
             "ID_Participante": user_id or st.session_state.get("tab2_user_id", ""),
-            "Grupo_Experimental": user_group
-            or st.session_state.get("tab2_user_group", ""),
+            "Grupo_Experimental": participant_group,
             "Modo": mode,
             "Opciones Presentadas": ", ".join(state.get("options", [])),
             "Producto Seleccionado": state.get("selected") or "",
@@ -1451,8 +1484,20 @@ def _build_experiment_results(
         record["Frame_inicio"] = buscar_frame(inicio_s)
         record["Frame_fin"] = buscar_frame(fin_s)
         record["Pantalla_mostrada"] = obtener_layout_modo(mode, state)
-        record["AOIs"] = obtener_aoi_layout(state, mode)
-        record["AOIs"] = json.dumps(record["AOIs"], ensure_ascii=False)
+        aois = obtener_aoi_layout(state, mode)
+
+        if participant_group == "Con SmartScore":
+            atn = calcular_atencion_recomendado(
+                aois, state.get("gaze_history", []), recomendado
+            )
+        else:
+            atn = {"tiempo": None, "fijaciones": None, "primera_mirada": None}
+
+        record["Atencion_Recomendado_Tiempo"] = atn["tiempo"]
+        record["Atencion_Recomendado_Fijaciones"] = atn["fijaciones"]
+        record["Atencion_Recomendado_PrimeraMirada"] = atn["primera_mirada"]
+
+        record["AOIs"] = json.dumps(aois, ensure_ascii=False)
 
         cursor_points = cursor_tracks.get(mode, [])
         (
@@ -1522,8 +1567,7 @@ def _build_experiment_results(
         summary_row = {
             "Usuario": user_name,
             "ID_Participante": user_id or st.session_state.get("tab2_user_id", ""),
-            "Grupo_Experimental": user_group
-            or st.session_state.get("tab2_user_group", ""),
+            "Grupo_Experimental": participant_group,
             "Modo": "Resumen total cursor",
             "Cursor · Puntos registrados": total_points,
             "Cursor · Inicio": start_timestamp,
@@ -1543,8 +1587,6 @@ def _build_experiment_results(
         )
 
     participant_id = user_id or st.session_state.get("tab2_user_id", "")
-    participant_group = user_group or st.session_state.get("tab2_user_group", "")
-
     if not cursor_points_df.empty:
         cursor_points_df["Usuario"] = user_name
         cursor_points_df["ID_Participante"] = participant_id
