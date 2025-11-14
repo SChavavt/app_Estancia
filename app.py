@@ -1359,6 +1359,18 @@ def obtener_aoi_layout(state, modo):
     return aoi_dict
 
 
+def obtener_layout_modo(modo, state):
+    if modo == "A/B":
+        return "AB-2col"
+    if modo == "Grid":
+        rows = state.get("grid_rows", 2)
+        cols = state.get("grid_cols", 3)
+        return f"Grid-{rows}x{cols}"
+    if modo == "Sequential":
+        return "Sequential-1"
+    return "Desconocido"
+
+
 def _build_experiment_results(
     user_name: str, user_id: str, user_group: str
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -1419,6 +1431,7 @@ def _build_experiment_results(
             else None,
             "Duración total experimento (s)": experiment_duration,
         }
+        record["Pantalla_mostrada"] = obtener_layout_modo(mode, state)
         record["AOIs"] = obtener_aoi_layout(state, mode)
         record["AOIs"] = json.dumps(record["AOIs"], ensure_ascii=False)
 
@@ -1497,6 +1510,11 @@ def _build_experiment_results(
         }
         summary_df = pd.concat(
             [summary_df, pd.DataFrame([summary_row])], ignore_index=True
+        )
+
+    if not summary_df.empty and "Pantalla_mostrada" in summary_df.columns:
+        summary_df["Pantalla_mostrada"] = (
+            summary_df["Pantalla_mostrada"].fillna("").astype(str)
         )
 
     participant_id = user_id or st.session_state.get("tab2_user_id", "")
