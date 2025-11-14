@@ -20,6 +20,8 @@ from github import Github, GithubException
 import msgpack
 import zmq
 
+from smartcore import buscar_frame
+
 # =========================================================
 # CONFIG
 # =========================================================
@@ -1435,6 +1437,11 @@ def _build_experiment_results(
         record["AOIs"] = obtener_aoi_layout(state, mode)
         record["AOIs"] = json.dumps(record["AOIs"], ensure_ascii=False)
 
+        inicio_s = record["Inicio del modo (s)"]
+        fin_s = record["Momento de finalización (s)"]
+        record["Frame_inicio"] = buscar_frame(inicio_s)
+        record["Frame_fin"] = buscar_frame(fin_s)
+
         cursor_points = cursor_tracks.get(mode, [])
         (
             cursor_total,
@@ -1482,6 +1489,11 @@ def _build_experiment_results(
         records.append(record)
 
     summary_df = pd.DataFrame(records)
+
+    if not summary_df.empty:
+        for frame_col in ["Frame_inicio", "Frame_fin"]:
+            if frame_col in summary_df.columns:
+                summary_df[frame_col] = summary_df[frame_col].astype("Int64")
 
     cursor_points_df = pd.DataFrame(global_cursor_points)
 
