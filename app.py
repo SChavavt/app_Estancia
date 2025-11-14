@@ -1321,6 +1321,44 @@ def _advance_visual_mode() -> None:
     _trigger_streamlit_rerun()
 
 
+def obtener_aoi_layout(state, modo):
+    """
+    Devuelve un dict con bounding boxes por producto.
+    Cada bounding box es [x1, y1, x2, y2] en coordenadas normalizadas 0-1.
+    """
+    aoi_dict = {}
+
+    # Para A/B (dos imágenes lado a lado)
+    if modo == "A/B":
+        productos = state.get("images", [])
+        if len(productos) == 2:
+            aoi_dict[productos[0].name] = [0.0, 0.0, 0.5, 1.0]
+            aoi_dict[productos[1].name] = [0.5, 0.0, 1.0, 1.0]
+
+    # Para Grid (usando filas × columnas desde state)
+    if modo == "Grid":
+        productos = state.get("images", [])
+        rows = state.get("grid_rows", 2)
+        cols = state.get("grid_cols", 3)
+
+        for i, p in enumerate(productos):
+            r = i // cols
+            c = i % cols
+            x1 = c / cols
+            y1 = r / rows
+            x2 = (c + 1) / cols
+            y2 = (r + 1) / rows
+            aoi_dict[p.name] = [x1, y1, x2, y2]
+
+    # Para Sequential (solo el producto mostrado)
+    if modo == "Sequential":
+        producto = state.get("current_image")
+        if producto:
+            aoi_dict[producto.name] = [0.0, 0.0, 1.0, 1.0]
+
+    return aoi_dict
+
+
 def _build_experiment_results(
     user_name: str, user_id: str, user_group: str
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -1381,6 +1419,8 @@ def _build_experiment_results(
             else None,
             "Duración total experimento (s)": experiment_duration,
         }
+        record["AOIs"] = obtener_aoi_layout(state, mode)
+        record["AOIs"] = json.dumps(record["AOIs"], ensure_ascii=False)
 
         cursor_points = cursor_tracks.get(mode, [])
         (
