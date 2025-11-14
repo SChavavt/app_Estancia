@@ -14,6 +14,11 @@ from typing import Optional
 
 import pandas as pd
 import numpy as np
+
+try:
+    WORLD_TIMESTAMPS = np.load("world_timestamps.npy")
+except Exception:
+    WORLD_TIMESTAMPS = None
 import streamlit as st
 import streamlit.components.v1 as components
 from github import Github, GithubException
@@ -652,6 +657,16 @@ def _reorder_person_columns(df: pd.DataFrame) -> pd.DataFrame:
     if "Usuario" in df_reordenado.columns:
         df_reordenado = df_reordenado.drop(columns=["Usuario"])
     return df_reordenado
+
+
+def buscar_frame(timestamp_segundos):
+    if WORLD_TIMESTAMPS is None:
+        return None
+    try:
+        idx = np.searchsorted(WORLD_TIMESTAMPS, timestamp_segundos)
+        return int(idx)
+    except Exception:
+        return None
 
 
 def _apply_reset_form_state() -> None:
@@ -1431,6 +1446,10 @@ def _build_experiment_results(
             else None,
             "Duración total experimento (s)": experiment_duration,
         }
+        inicio_s = record["Inicio del modo (s)"]
+        fin_s = record["Momento de finalización (s)"]
+        record["Frame_inicio"] = buscar_frame(inicio_s)
+        record["Frame_fin"] = buscar_frame(fin_s)
         record["Pantalla_mostrada"] = obtener_layout_modo(mode, state)
         record["AOIs"] = obtener_aoi_layout(state, mode)
         record["AOIs"] = json.dumps(record["AOIs"], ensure_ascii=False)
@@ -1482,6 +1501,12 @@ def _build_experiment_results(
         records.append(record)
 
     summary_df = pd.DataFrame(records)
+
+    for column in ("Frame_inicio", "Frame_fin"):
+        if column in summary_df.columns:
+            summary_df[column] = pd.to_numeric(
+                summary_df[column], errors="coerce"
+            ).astype("Int64")
 
     cursor_points_df = pd.DataFrame(global_cursor_points)
 
