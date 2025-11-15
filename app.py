@@ -22,8 +22,6 @@ except Exception:
     WORLD_TIMESTAMPS = None
 import streamlit as st
 from github import Github, GithubException
-import msgpack
-import zmq
 
 # =========================================================
 # CONFIG
@@ -63,23 +61,6 @@ LANGUAGE_CONTENT = {
         "page_header": "🧠 Smart Core – Questionnaire",
         "tab1_title": "📝 SmartScore Questionnaire",
         "tab2_title": "👁️ Visual Experiment",
-        "tab3_title": "📊 Pupil Labs Metrics (Real Time)",
-        "tab3_caption": "Connect to Pupil Labs and monitor gaze metrics in real time.",
-        "tab3_password_prompt": "Enter the password to unlock the Pupil Labs metrics tab.",
-        "tab3_password_label": "Enter the password",
-        "tab3_unlock_button": "Unlock",
-        "tab3_password_error": "Incorrect password. Please try again.",
-        "tab3_connection_label": "Connection preset",
-        "tab3_endpoint_label": "Endpoint (host:port)",
-        "tab3_start_button": "Start capture",
-        "tab3_stop_button": "Stop capture",
-        "tab3_start_error": "Couldn't connect to the Pupil Service with that endpoint.",
-        "tab3_status_running": "Streaming metrics from {endpoint}.",
-        "tab3_status_stopped": "Capture is stopped.",
-        "tab3_metrics_subheader": "Recent gaze metrics",
-        "tab3_waiting_data": "Waiting for data from Pupil Service...",
-        "tab3_no_connection_options": "No connection presets are configured.",
-        "tab3_lock_button": "Lock tab",
         "tab2_header": "👁️ Visual Experiment – Product Viewing Task",
         "tab2_caption": "Explore different visual layouts and pick the product you prefer in each mode.",
         "tab2_name_reused_warning": "The name you used to sign in is no longer available. Select another name to continue.",
@@ -151,23 +132,6 @@ LANGUAGE_CONTENT = {
         "page_header": "🧠 Smart Core – Cuestionario",
         "tab1_title": "📝 Cuestionario SmartScore",
         "tab2_title": "👁️ Experimento Visual",
-        "tab3_title": "📊 Métricas Pupil Labs (Tiempo Real)",
-        "tab3_caption": "Conéctate a Pupil Labs y monitorea métricas de mirada en tiempo real.",
-        "tab3_password_prompt": "Ingresa la contraseña para desbloquear la pestaña de métricas Pupil Labs.",
-        "tab3_password_label": "Ingresa la contraseña",
-        "tab3_unlock_button": "Desbloquear",
-        "tab3_password_error": "Contraseña incorrecta. Intenta nuevamente.",
-        "tab3_connection_label": "Preajuste de conexión",
-        "tab3_endpoint_label": "Endpoint (host:puerto)",
-        "tab3_start_button": "Iniciar captura",
-        "tab3_stop_button": "Detener captura",
-        "tab3_start_error": "No se pudo conectar con Pupil Service usando ese endpoint.",
-        "tab3_status_running": "Transmitiendo métricas desde {endpoint}.",
-        "tab3_status_stopped": "La captura está detenida.",
-        "tab3_metrics_subheader": "Métricas recientes de mirada",
-        "tab3_waiting_data": "Esperando datos de Pupil Service...",
-        "tab3_no_connection_options": "No hay opciones de conexión configuradas.",
-        "tab3_lock_button": "Bloquear pestaña",
         "tab2_header": "👁️ Experimento Visual – Tarea de Observación de Productos",
         "tab2_caption": "Explora diferentes presentaciones visuales y selecciona el producto que prefieras en cada modalidad.",
         "tab2_name_reused_warning": "El nombre con el que accediste ya no está disponible. Selecciona otro nombre para continuar.",
@@ -297,9 +261,6 @@ st.session_state.setdefault("tab2_user_group", "")
 st.session_state.setdefault("tab2_smartscore_map", {})
 st.session_state.setdefault("tab2_smartscore_owner", "")
 st.session_state.setdefault("tab2_name_query", "")
-st.session_state.setdefault("tab3_password_unlocked", False)
-st.session_state.setdefault("_prev_pupil_connection_mode", None)
-
 VISUAL_MODE_OPTIONS = ["A/B", "Grid", "Sequential"]
 VISUAL_SUBFOLDERS = {"A/B": "A_B", "Grid": "Grid", "Sequential": "Sequential"}
 VALID_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
@@ -1647,224 +1608,12 @@ def _load_registered_names(path: Path) -> tuple[list[str], Optional[str]]:
 
 
 # =========================================================
-# PUPIL LABS STREAMING HELPERS
-# =========================================================
-PUPIL_CONNECTION_OPTIONS = {
-    "Local (127.0.0.1:50020)": "127.0.0.1:50020",
-    "Remoto (192.168.1.117:50020)": "192.168.1.117:50020",
-}
-PUPIL_TOPIC = "gaze.3d.01"
-
-
-def _initialize_pupil_session_state() -> None:
-    if "pupil_metrics" not in st.session_state:
-        st.session_state["pupil_metrics"] = []
-    if "pupil_start_time" not in st.session_state:
-        st.session_state["pupil_start_time"] = None
-    if "pupil_thread" not in st.session_state:
-        st.session_state["pupil_thread"] = None
-    if "pupil_thread_stop" not in st.session_state:
-        st.session_state["pupil_thread_stop"] = None
-    if "pupil_socket" not in st.session_state:
-        st.session_state["pupil_socket"] = None
-    if "pupil_capturing" not in st.session_state:
-        st.session_state["pupil_capturing"] = False
-    if "pupil_endpoint" not in st.session_state:
-        st.session_state["pupil_endpoint"] = PUPIL_CONNECTION_OPTIONS[
-            "Local (127.0.0.1:50020)"
-        ]
-    if "pupil_connection_mode" not in st.session_state:
-        st.session_state["pupil_connection_mode"] = list(PUPIL_CONNECTION_OPTIONS.keys())[0]
-    if "pupil_metrics_lock" not in st.session_state:
-        st.session_state["pupil_metrics_lock"] = threading.Lock()
-    if "pupil_metrics_placeholder" not in st.session_state:
-        st.session_state["pupil_metrics_placeholder"] = None
-    if "pupil_last_attempt" not in st.session_state:
-        st.session_state["pupil_last_attempt"] = None
-    if "pupil_last_error" not in st.session_state:
-        st.session_state["pupil_last_error"] = None
-    if "pupil_last_status" not in st.session_state:
-        st.session_state["pupil_last_status"] = "idle"
-
-
-def _stop_pupil_capture() -> None:
-    stop_event: Optional[threading.Event] = st.session_state.get("pupil_thread_stop")
-    thread: Optional[threading.Thread] = st.session_state.get("pupil_thread")
-    socket = st.session_state.get("pupil_socket")
-
-    if stop_event is not None:
-        stop_event.set()
-
-    if thread and thread.is_alive():
-        thread.join(timeout=1.0)
-
-    if socket is not None:
-        try:
-            socket.close(0)
-        except zmq.ZMQError:
-            pass
-
-    st.session_state["pupil_socket"] = None
-    st.session_state["pupil_thread"] = None
-    st.session_state["pupil_thread_stop"] = None
-    st.session_state["pupil_capturing"] = False
-    st.session_state["pupil_last_status"] = "stopped"
-
-
-def _append_pupil_metric(gaze_data: dict) -> None:
-    now = datetime.now()
-    start_time = st.session_state.get("pupil_start_time")
-    relative_time = None
-    if isinstance(start_time, datetime):
-        relative_time = (now - start_time).total_seconds()
-
-    norm_pos_x = None
-    norm_pos_y = None
-    norm_pos = gaze_data.get("norm_pos")
-    if isinstance(norm_pos, dict):
-        norm_pos_x = norm_pos.get("x")
-        norm_pos_y = norm_pos.get("y")
-    elif isinstance(norm_pos, (list, tuple)) and len(norm_pos) >= 2:
-        norm_pos_x = norm_pos[0]
-        norm_pos_y = norm_pos[1]
-
-    user_name = (
-        st.session_state.get("tab2_user_name")
-        or st.session_state.get("nombre_completo")
-        or ""
-    )
-
-    metric = {
-        "timestamp": now.isoformat(),
-        "relative_time": relative_time,
-        "norm_pos_x": norm_pos_x,
-        "norm_pos_y": norm_pos_y,
-        "confidence": gaze_data.get("confidence"),
-        "user_name": user_name,
-    }
-
-    if "timestamp" in gaze_data:
-        metric["pupil_timestamp"] = gaze_data["timestamp"]
-
-    lock: threading.Lock = st.session_state["pupil_metrics_lock"]
-    with lock:
-        st.session_state["pupil_metrics"].append(metric)
-
-
-def _pupil_listener_thread(stop_event: threading.Event, socket: zmq.Socket) -> None:
-    while not stop_event.is_set():
-        try:
-            while True:
-                try:
-                    frames = socket.recv_multipart(flags=zmq.NOBLOCK)
-                except zmq.Again:
-                    break
-                gaze_payload = frames[-1] if frames else b""
-                try:
-                    gaze_data = msgpack.loads(gaze_payload, raw=False)
-                except Exception:
-                    gaze_data = {}
-                if isinstance(gaze_data, dict):
-                    _append_pupil_metric(gaze_data)
-        except zmq.ZMQError:
-            stop_event.set()
-
-        placeholder = st.session_state.get("pupil_metrics_placeholder")
-        lock: threading.Lock = st.session_state["pupil_metrics_lock"]
-        with lock:
-            recent_metrics = st.session_state["pupil_metrics"][-10:]
-
-        if placeholder is not None:
-            if recent_metrics:
-                df_display = pd.DataFrame(recent_metrics)
-                display_columns = [
-                    col
-                    for col in [
-                        "timestamp",
-                        "relative_time",
-                        "norm_pos_x",
-                        "norm_pos_y",
-                        "confidence",
-                        "user_name",
-                    ]
-                    if col in df_display.columns
-                ]
-                placeholder.dataframe(df_display[display_columns])
-            else:
-                placeholder.info("Esperando datos de Pupil Service...")
-
-        time.sleep(1)
-
-
-def _start_pupil_capture(endpoint: str) -> bool:
-    _initialize_pupil_session_state()
-
-    host = endpoint
-    port = "50020"
-    if ":" in endpoint:
-        host, port = endpoint.split(":", 1)
-
-    context = zmq.Context.instance()
-    req_socket = context.socket(zmq.REQ)
-    req_socket.setsockopt(zmq.LINGER, 0)
-    req_socket.setsockopt(zmq.RCVTIMEO, 2000)
-    req_socket.setsockopt(zmq.SNDTIMEO, 2000)
-
-    try:
-        req_socket.connect(f"tcp://{host}:{port}")
-        req_socket.send_string("SUB_PORT")
-        sub_port = req_socket.recv_string()
-    except zmq.ZMQError:
-        try:
-            req_socket.close(0)
-        except zmq.ZMQError:
-            pass
-        return False
-    finally:
-        try:
-            req_socket.close(0)
-        except zmq.ZMQError:
-            pass
-
-    sub_socket = context.socket(zmq.SUB)
-    sub_socket.setsockopt(zmq.LINGER, 0)
-    sub_socket.setsockopt_string(zmq.SUBSCRIBE, PUPIL_TOPIC)
-
-    try:
-        sub_socket.connect(f"tcp://{host}:{sub_port}")
-    except zmq.ZMQError:
-        try:
-            sub_socket.close(0)
-        except zmq.ZMQError:
-            pass
-        return False
-
-    st.session_state["pupil_socket"] = sub_socket
-    st.session_state["pupil_capturing"] = True
-    st.session_state["pupil_start_time"] = datetime.now()
-    st.session_state["pupil_metrics"] = []
-
-    stop_event = threading.Event()
-    st.session_state["pupil_thread_stop"] = stop_event
-    listener_thread = threading.Thread(
-        target=_pupil_listener_thread,
-        args=(stop_event, sub_socket),
-        daemon=True,
-    )
-    st.session_state["pupil_thread"] = listener_thread
-    listener_thread.start()
-
-    return True
-
-
-# =========================================================
 # INTERFACES
 # =========================================================
-tab1, tab2, tab3, tab_admin = st.tabs(
+tab1, tab2, tab_admin = st.tabs(
     [
         t("tab1_title"),
         t("tab2_title"),
-        t("tab3_title"),
         "🛠️ Admin",
     ]
 )
@@ -2488,110 +2237,6 @@ with tab2:
         ):
             _complete_visual_experiment(usuario_activo)
             _trigger_streamlit_rerun()
-
-
-with tab3:
-    st.header(t("tab3_title"))
-    st.caption(t("tab3_caption"))
-
-    _initialize_pupil_session_state()
-
-    if not st.session_state.get("tab3_password_unlocked", False):
-        st.session_state["pupil_metrics_placeholder"] = None
-        st.caption(t("tab3_password_prompt"))
-        with st.form("tab3_password_form"):
-            tab3_password = st.text_input(
-                t("tab3_password_label"),
-                type="password",
-            )
-            tab3_unlock = st.form_submit_button(t("tab3_unlock_button"))
-
-        if tab3_unlock:
-            if tab3_password == "Chava":
-                st.session_state["tab3_password_unlocked"] = True
-                _trigger_streamlit_rerun()
-            else:
-                st.error(t("tab3_password_error"))
-    else:
-        connection_options = list(PUPIL_CONNECTION_OPTIONS.keys())
-        if not connection_options:
-            st.error(t("tab3_no_connection_options"))
-        else:
-            if st.session_state.get("_prev_pupil_connection_mode") is None:
-                st.session_state["_prev_pupil_connection_mode"] = st.session_state.get(
-                    "pupil_connection_mode",
-                    connection_options[0],
-                )
-
-            selected_mode = st.selectbox(
-                t("tab3_connection_label"),
-                options=connection_options,
-                key="pupil_connection_mode",
-            )
-
-            if selected_mode != st.session_state.get("_prev_pupil_connection_mode"):
-                st.session_state["_prev_pupil_connection_mode"] = selected_mode
-                st.session_state["pupil_endpoint"] = PUPIL_CONNECTION_OPTIONS[selected_mode]
-
-            st.text_input(
-                t("tab3_endpoint_label"),
-                key="pupil_endpoint",
-            )
-
-            col_start, col_stop = st.columns(2)
-            with col_start:
-                if st.button(
-                    t("tab3_start_button"),
-                    disabled=st.session_state.get("pupil_capturing", False),
-                ):
-                    endpoint = st.session_state.get("pupil_endpoint", "")
-                    if _start_pupil_capture(endpoint):
-                        st.success(t("tab3_status_running", endpoint=endpoint))
-                    else:
-                        st.error(t("tab3_start_error"))
-            with col_stop:
-                if st.button(
-                    t("tab3_stop_button"),
-                    disabled=not st.session_state.get("pupil_capturing", False),
-                ):
-                    _stop_pupil_capture()
-
-            endpoint = st.session_state.get("pupil_endpoint", "")
-            if st.session_state.get("pupil_capturing", False):
-                st.success(t("tab3_status_running", endpoint=endpoint))
-            else:
-                st.info(t("tab3_status_stopped"))
-
-            st.subheader(t("tab3_metrics_subheader"))
-            metrics_placeholder = st.empty()
-            st.session_state["pupil_metrics_placeholder"] = metrics_placeholder
-            lock: threading.Lock = st.session_state["pupil_metrics_lock"]
-            with lock:
-                recent_metrics = st.session_state.get("pupil_metrics", [])[-10:]
-
-            if recent_metrics:
-                df_display = pd.DataFrame(recent_metrics)
-                display_columns = [
-                    col
-                    for col in [
-                        "timestamp",
-                        "relative_time",
-                        "norm_pos_x",
-                        "norm_pos_y",
-                        "confidence",
-                        "user_name",
-                    ]
-                    if col in df_display.columns
-                ]
-                metrics_placeholder.dataframe(df_display[display_columns])
-            else:
-                metrics_placeholder.info(t("tab3_waiting_data"))
-
-            if st.button(t("tab3_lock_button")):
-                st.session_state["tab3_password_unlocked"] = False
-                _stop_pupil_capture()
-                st.session_state["pupil_metrics_placeholder"] = None
-                _trigger_streamlit_rerun()
 
 
 def asignar_grupos_experimentales():
