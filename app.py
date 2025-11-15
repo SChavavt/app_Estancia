@@ -7,6 +7,7 @@ import html
 import threading
 import time
 import unicodedata
+from difflib import SequenceMatcher
 from io import BytesIO
 from datetime import datetime
 from pathlib import Path
@@ -83,8 +84,12 @@ LANGUAGE_CONTENT = {
         "tab2_caption": "Explore different visual layouts and pick the product you prefer in each mode.",
         "tab2_name_reused_warning": "The name you used to sign in is no longer available. Select another name to continue.",
         "tab2_requires_response_info": "To access this section, first save at least one response from the SmartScore tab.",
-        "tab2_select_name_prompt": "Select your registered full name",
-        "tab2_choose_name_info": "Select a name and click Start experiment to begin.",
+        "tab2_select_name_prompt": "Type your registered full name",
+        "tab2_choose_name_info": "Type your registered name and click Start experiment. We'll suggest close matches if more than one person fits.",
+        "tab2_name_matches_prompt": "We found several similar names. Select the correct one.",
+        "tab2_name_match_found": "Matched with the registered name: {match}",
+        "tab2_name_no_matches": "No close matches yet. Try adding more of your registered name.",
+        "tab2_name_required_error": "Enter a registered name to continue.",
         "tab2_logged_in_as": "Signed in as: {user}",
         "tab2_switch_user": "Switch user",
         "tab2_start_experiment": "Start experiment",
@@ -167,8 +172,12 @@ LANGUAGE_CONTENT = {
         "tab2_caption": "Explora diferentes presentaciones visuales y selecciona el producto que prefieras en cada modalidad.",
         "tab2_name_reused_warning": "El nombre con el que accediste ya no está disponible. Selecciona otro nombre para continuar.",
         "tab2_requires_response_info": "Para acceder a esta sección primero guarda al menos una respuesta desde la pestaña de SmartScore.",
-        "tab2_select_name_prompt": "Selecciona tu nombre completo registrado",
-        "tab2_choose_name_info": "Selecciona un nombre y haz clic en Empezar experimento para iniciar.",
+        "tab2_select_name_prompt": "Escribe tu nombre completo registrado",
+        "tab2_choose_name_info": "Escribe tu nombre registrado y haz clic en Empezar experimento. Si encontramos varias coincidencias podrás elegir la correcta.",
+        "tab2_name_matches_prompt": "Encontramos varias coincidencias. Selecciona tu nombre correcto.",
+        "tab2_name_match_found": "Coincidencia encontrada: {match}",
+        "tab2_name_no_matches": "Aún no vemos coincidencias. Escribe un poco más de tu nombre registrado.",
+        "tab2_name_required_error": "Ingresa un nombre registrado antes de empezar.",
         "tab2_logged_in_as": "Accediendo como: {user}",
         "tab2_switch_user": "Cambiar de usuario",
         "tab2_start_experiment": "Empezar experimento",
@@ -287,6 +296,7 @@ st.session_state.setdefault("tab2_user_id", "")
 st.session_state.setdefault("tab2_user_group", "")
 st.session_state.setdefault("tab2_smartscore_map", {})
 st.session_state.setdefault("tab2_smartscore_owner", "")
+st.session_state.setdefault("tab2_name_query", "")
 st.session_state.setdefault("tab3_password_unlocked", False)
 st.session_state.setdefault("_prev_pupil_connection_mode", None)
 
@@ -538,6 +548,52 @@ def _lookup_participant_metadata(user_name: str) -> tuple[str, str]:
         participant_group = str(participant_group)
 
     return participant_id, participant_group
+
+
+def _normalize_name_for_match(value: str) -> str:
+    if not isinstance(value, str):
+        return ""
+    normalized = unicodedata.normalize("NFKD", value)
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    normalized = re.sub(r"[^a-z0-9 ]+", " ", normalized.casefold())
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized
+
+
+def _find_registered_name_matches(
+    query: str, registered_names: list[str], limit: int = 10
+) -> list[str]:
+    normalized_query = _normalize_name_for_match(query)
+    if not normalized_query:
+        return []
+
+    compact_query = normalized_query.replace(" ", "")
+    min_threshold = 0.55 if len(compact_query) >= 3 else 0.7
+
+    scored_matches: list[tuple[float, str]] = []
+    for name in registered_names:
+        normalized_candidate = _normalize_name_for_match(name)
+        if not normalized_candidate:
+            continue
+
+        if normalized_query == normalized_candidate:
+            score = 1.0
+        elif normalized_query in normalized_candidate:
+            score = 0.95
+        elif normalized_candidate in normalized_query:
+            score = 0.9
+        else:
+            score = SequenceMatcher(None, normalized_query, normalized_candidate).ratio()
+            tokens = [token for token in normalized_query.split(" ") if token]
+            if tokens:
+                hits = sum(1 for token in tokens if token in normalized_candidate)
+                score += 0.05 * hits
+
+        scored_matches.append((min(score, 1.0), name))
+
+    scored_matches.sort(key=lambda item: item[0], reverse=True)
+    filtered = [name for score, name in scored_matches if score >= min_threshold]
+    return filtered[:limit]
 
 
 def get_user_group(user_name: str) -> str:
@@ -2081,16 +2137,34 @@ with tab2:
         tab2_can_continue = False
 
     if tab2_can_continue and not st.session_state.get("tab2_authenticated", False):
-        selected_name = st.selectbox(
+        name_query = st.text_input(
             t("tab2_select_name_prompt"),
-            registered_names,
+            key="tab2_name_query",
         )
+        normalized_query = _normalize_name_for_match(name_query)
+        matches = _find_registered_name_matches(name_query, registered_names)
+        selected_name: Optional[str] = None
+
+        if matches:
+            if len(matches) == 1:
+                selected_name = matches[0]
+                st.caption(t("tab2_name_match_found", match=selected_name))
+            else:
+                selected_name = st.selectbox(
+                    t("tab2_name_matches_prompt"),
+                    matches,
+                    key="tab2_match_choice",
+                )
+        elif normalized_query and len(normalized_query.replace(" ", "")) >= 3:
+            st.caption(t("tab2_name_no_matches"))
+
         start_clicked = st.button(
             t("tab2_start_experiment"),
             key="tab2_start_experiment_button",
+            disabled=not bool(selected_name),
         )
 
-        if start_clicked:
+        if start_clicked and selected_name:
             st.session_state["tab2_authenticated"] = True
             st.session_state["tab2_user_name"] = selected_name
             participant_id, participant_group = _lookup_participant_metadata(selected_name)
@@ -2107,6 +2181,8 @@ with tab2:
             st.session_state["experiment_start_time"] = datetime.now()
             st.session_state["experiment_end_time"] = None
             _trigger_streamlit_rerun()
+        elif start_clicked and not selected_name:
+            st.error(t("tab2_name_required_error"))
 
         if not st.session_state.get("tab2_authenticated", False):
             st.info(t("tab2_choose_name_info"))
@@ -2398,9 +2474,6 @@ with tab2:
         selection_made = bool(current_state.get("selected"))
         is_last_mode = current_index == total_modes - 1
 
-    if not selection_made:
-        st.info(t("tab2_select_to_continue"))
-
     if not is_last_mode:
         if st.button(
             t("tab2_next_mode"),
@@ -2409,10 +2482,9 @@ with tab2:
         ):
             _advance_visual_mode()
     else:
-        if st.button(
-            t("tab2_finish_experiment"),
-            key="finish_experiment",
-            disabled=not selection_made,
+        if (
+            selection_made
+            and not st.session_state.get("experiment_completed")
         ):
             _complete_visual_experiment(usuario_activo)
             _trigger_streamlit_rerun()
