@@ -20,7 +20,6 @@ try:
 except Exception:
     WORLD_TIMESTAMPS = None
 import streamlit as st
-import streamlit.components.v1 as components
 from github import Github, GithubException
 import msgpack
 import zmq
@@ -261,7 +260,6 @@ st.session_state.setdefault("tab2_user_id", "")
 st.session_state.setdefault("tab2_user_group", "")
 st.session_state.setdefault("tab2_smartscore_map", {})
 st.session_state.setdefault("tab2_smartscore_owner", "")
-st.session_state.setdefault("cursor_tracks", {})
 
 VISUAL_MODE_OPTIONS = ["A/B", "Grid", "Sequential"]
 VISUAL_SUBFOLDERS = {"A/B": "A_B", "Grid": "Grid", "Sequential": "Sequential"}
@@ -822,168 +820,8 @@ def _reset_visual_experiment_state() -> None:
     st.session_state["experiment_result_path"] = ""
     st.session_state["experiment_result_df"] = pd.DataFrame()
     st.session_state["last_selection_feedback"] = ""
-    st.session_state["cursor_tracks"] = {}
     st.session_state["experiment_start_time"] = None
     st.session_state["experiment_end_time"] = None
-
-
-def _store_cursor_batch(mode: str, batch: list) -> None:
-    if not mode or not batch:
-        return
-    tracks: dict = st.session_state.setdefault("cursor_tracks", {})
-    mode_track: list = tracks.setdefault(mode, [])
-    for entry in batch:
-        if not isinstance(entry, dict):
-            continue
-        try:
-            timestamp_ms = float(entry.get("t"))
-            x = float(entry.get("x"))
-            y = float(entry.get("y"))
-        except (TypeError, ValueError, OverflowError):
-            continue
-        try:
-            timestamp_iso = datetime.fromtimestamp(timestamp_ms / 1000.0).isoformat()
-        except (OSError, OverflowError, ValueError):
-            continue
-        point = {
-            "timestamp": timestamp_iso,
-            "x": round(x, 3),
-            "y": round(y, 3),
-            "mode": mode,
-        }
-        page_x = entry.get("px")
-        page_y = entry.get("py")
-        try:
-            if page_x is not None and page_y is not None:
-                point["page_x"] = round(float(page_x), 3)
-                point["page_y"] = round(float(page_y), 3)
-        except (TypeError, ValueError, OverflowError):
-            pass
-        mode_track.append(point)
-    if len(mode_track) > 5000:
-        mode_track[:] = mode_track[-5000:]
-    tracks[mode] = mode_track
-    st.session_state["cursor_tracks"] = tracks
-
-
-def _extract_cursor_stats(cursor_points: list[dict]) -> tuple[int, str, str, Optional[float]]:
-    total_points = len(cursor_points)
-    if not cursor_points:
-        return total_points, "", "", None
-
-    timestamps: list[datetime] = []
-    for point in cursor_points:
-        raw_timestamp = point.get("timestamp")
-        if not isinstance(raw_timestamp, str):
-            continue
-        try:
-            timestamps.append(datetime.fromisoformat(raw_timestamp))
-        except ValueError:
-            continue
-
-    if not timestamps:
-        return total_points, "", "", None
-
-    start = min(timestamps)
-    end = max(timestamps)
-    duration = (end - start).total_seconds() if end >= start else None
-    return total_points, start.isoformat(), end.isoformat(), duration
-
-
-def _capture_cursor_movements(active_mode: str) -> None:
-    if not active_mode:
-        return
-    html_code = """
-        <script>
-        (function() {
-            const Streamlit = window.Streamlit;
-            if (!Streamlit) {
-                return;
-            }
-            const stateKey = "__cursorTrackerState";
-            const throttleMs = 200;
-            const maxBatch = 60;
-            const state = window[stateKey] || (window[stateKey] = {
-                pending: [],
-                lastSent: 0,
-                initialized: false,
-            });
-            function getTargetDocument() {
-                if (window.parent && window.parent.document) {
-                    try {
-                        return window.parent.document;
-                    } catch (error) {
-                        console.warn("Cursor tracker: unable to access parent document", error);
-                    }
-                }
-                return document;
-            }
-            function send(force) {
-                const now = Date.now();
-                if (!force && (now - state.lastSent) < throttleMs) {
-                    return;
-                }
-                if (!state.pending.length) {
-                    return;
-                }
-                state.lastSent = now;
-                const payload = state.pending.slice();
-                state.pending.length = 0;
-                Streamlit.setComponentValue(payload);
-            }
-            if (!state.initialized) {
-                state.initialized = true;
-                const targetDocument = getTargetDocument();
-                const handler = (event) => {
-                    state.pending.push({
-                        t: Date.now(),
-                        x: event.clientX,
-                        y: event.clientY,
-                        px: event.pageX,
-                        py: event.pageY,
-                    });
-                    if (state.pending.length >= maxBatch) {
-                        send(true);
-                    } else {
-                        send(false);
-                    }
-                };
-                targetDocument.addEventListener("mousemove", handler);
-                targetDocument.addEventListener("mouseleave", () => send(true));
-                window.addEventListener("blur", () => send(true));
-                window.addEventListener("beforeunload", () => send(true));
-                setInterval(() => send(false), throttleMs);
-            }
-            Streamlit.setComponentReady();
-            send(false);
-        })();
-        </script>
-        """
-    html_kwargs = {"height": 0}
-    key_supported = st.session_state.get("_cursor_tracker_key_supported", True)
-    try:
-        if key_supported:
-            batch = components.html(
-                html_code,
-                key="cursor_tracker_component",
-                **html_kwargs,
-            )
-        else:
-            batch = components.html(html_code, **html_kwargs)
-    except TypeError:
-        st.session_state["_cursor_tracker_key_supported"] = False
-        batch = components.html(html_code, **html_kwargs)
-    if not batch:
-        return
-    if isinstance(batch, str):
-        try:
-            data = json.loads(batch)
-        except json.JSONDecodeError:
-            return
-    else:
-        data = batch
-    if isinstance(data, list):
-        _store_cursor_batch(active_mode, data)
 
 
 def _ensure_mode_initialized(mode: str) -> None:
@@ -1423,7 +1261,6 @@ def _build_experiment_results(
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     sequence: list = st.session_state.get("mode_sequence", [])
     sessions: dict = st.session_state.get("mode_sessions", {})
-    cursor_tracks: dict = st.session_state.get("cursor_tracks", {})
     experiment_start = st.session_state.get("experiment_start_time")
     experiment_end = st.session_state.get("experiment_end_time")
     experiment_start_iso = (
@@ -1439,7 +1276,6 @@ def _build_experiment_results(
         experiment_duration = (experiment_end - experiment_start).total_seconds()
     records: list[dict] = []
     participant_group = user_group or st.session_state.get("tab2_user_group", "")
-    global_cursor_points: list[dict] = []
     for mode in sequence:
         state = sessions.get(mode, {})
         start_time = state.get("start_time")
@@ -1499,24 +1335,6 @@ def _build_experiment_results(
 
         record["AOIs"] = json.dumps(aois, ensure_ascii=False)
 
-        cursor_points = cursor_tracks.get(mode, [])
-        (
-            cursor_total,
-            cursor_start,
-            cursor_end,
-            cursor_duration,
-        ) = _extract_cursor_stats(cursor_points)
-        record["Cursor · Puntos registrados"] = cursor_total
-        record["Cursor · Inicio"] = cursor_start
-        record["Cursor · Fin"] = cursor_end
-        record["Cursor · Duración (s)"] = cursor_duration
-        record["Cursor · Recorrido"] = (
-            json.dumps(cursor_points, ensure_ascii=False) if cursor_points else ""
-        )
-
-        if cursor_points:
-            global_cursor_points.extend(cursor_points)
-
         if mode == "A/B":
             stage_durations = state.get("ab_stage_durations", {})
             record["Tiempo comparación A/B · Par 1 (s)"] = stage_durations.get("pair_1")
@@ -1553,46 +1371,12 @@ def _build_experiment_results(
                 summary_df[column], errors="coerce"
             ).astype("Int64")
 
-    cursor_points_df = pd.DataFrame(global_cursor_points)
-
-    if not cursor_points_df.empty:
-        cursor_points_df = cursor_points_df.sort_values("timestamp")
-
-        (
-            total_points,
-            start_timestamp,
-            end_timestamp,
-            total_duration,
-        ) = _extract_cursor_stats(global_cursor_points)
-        summary_row = {
-            "Usuario": user_name,
-            "ID_Participante": user_id or st.session_state.get("tab2_user_id", ""),
-            "Grupo_Experimental": participant_group,
-            "Modo": "Resumen total cursor",
-            "Cursor · Puntos registrados": total_points,
-            "Cursor · Inicio": start_timestamp,
-            "Cursor · Fin": end_timestamp,
-            "Cursor · Duración (s)": total_duration,
-            "Cursor · Recorrido": json.dumps(
-                global_cursor_points, ensure_ascii=False
-            ),
-        }
-        summary_df = pd.concat(
-            [summary_df, pd.DataFrame([summary_row])], ignore_index=True
-        )
-
     if not summary_df.empty and "Pantalla_mostrada" in summary_df.columns:
         summary_df["Pantalla_mostrada"] = (
             summary_df["Pantalla_mostrada"].fillna("").astype(str)
         )
 
-    participant_id = user_id or st.session_state.get("tab2_user_id", "")
-    if not cursor_points_df.empty:
-        cursor_points_df["Usuario"] = user_name
-        cursor_points_df["ID_Participante"] = participant_id
-        cursor_points_df["Grupo_Experimental"] = participant_group
-
-    return summary_df, cursor_points_df
+    return summary_df, pd.DataFrame()
 
 
 def _complete_visual_experiment(user_name: str) -> None:
@@ -1615,7 +1399,7 @@ def _complete_visual_experiment(user_name: str) -> None:
 
     st.session_state["experiment_end_time"] = datetime.now()
 
-    summary_df, cursor_points_df = _build_experiment_results(
+    summary_df, _ = _build_experiment_results(
         user_name,
         st.session_state.get("tab2_user_id", ""),
         st.session_state.get("tab2_user_group", ""),
@@ -1627,15 +1411,8 @@ def _complete_visual_experiment(user_name: str) -> None:
 
     with pd.ExcelWriter(file_path, engine="openpyxl") as writer:
         summary_df.to_excel(writer, sheet_name="Resumen", index=False)
-        if not cursor_points_df.empty:
-            cursor_points_df.to_excel(
-                writer,
-                sheet_name="Cursor crudo",
-                index=False,
-            )
 
     st.session_state["experiment_result_df"] = summary_df
-    st.session_state["experiment_cursor_points_df"] = cursor_points_df
     st.session_state["experiment_result_path"] = str(file_path)
     st.session_state["experiment_completed"] = True
     st.session_state["last_selection_feedback"] = ""
@@ -1704,18 +1481,10 @@ def _df_to_excel_bytes(df: pd.DataFrame) -> bytes:
     return buffer.getvalue()
 
 
-def _experiment_results_to_excel_bytes(
-    summary_df: pd.DataFrame, cursor_points_df: pd.DataFrame
-) -> bytes:
+def _experiment_results_to_excel_bytes(summary_df: pd.DataFrame) -> bytes:
     buffer = BytesIO()
-    sheets: dict[str, pd.DataFrame] = {"Resumen": summary_df}
-    if isinstance(cursor_points_df, pd.DataFrame) and not cursor_points_df.empty:
-        sheets["Cursor crudo"] = cursor_points_df
-
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        for sheet_name, sheet_df in sheets.items():
-            safe_sheet = sheet_name[:31] or "Hoja1"
-            sheet_df.to_excel(writer, sheet_name=safe_sheet, index=False)
+        summary_df.to_excel(writer, sheet_name="Resumen", index=False)
 
     buffer.seek(0)
     return buffer.getvalue()
@@ -2373,7 +2142,6 @@ with tab2:
         if st.session_state.get("experiment_completed"):
             result_path = st.session_state.get("experiment_result_path", "")
             result_df = st.session_state.get("experiment_result_df")
-            cursor_df = st.session_state.get("experiment_cursor_points_df")
             if result_path:
                 st.success(t("tab2_completed_with_path", path=result_path))
             else:
@@ -2381,9 +2149,6 @@ with tab2:
 
             if isinstance(result_df, pd.DataFrame) and not result_df.empty:
                 st.dataframe(result_df)
-                if isinstance(cursor_df, pd.DataFrame) and not cursor_df.empty:
-                    with st.expander("📍 Trayectoria completa del cursor"):
-                        st.dataframe(cursor_df)
                 download_name = (
                     Path(result_path).name
                     if result_path
@@ -2391,10 +2156,7 @@ with tab2:
                 )
                 st.download_button(
                     t("tab2_download_results"),
-                    data=_experiment_results_to_excel_bytes(
-                        result_df,
-                        cursor_df if isinstance(cursor_df, pd.DataFrame) else pd.DataFrame(),
-                    ),
+                    data=_experiment_results_to_excel_bytes(result_df),
                     file_name=download_name,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
@@ -2423,8 +2185,6 @@ with tab2:
 
         images = current_state.get("images", [])
         smartscore_map = st.session_state.get("tab2_smartscore_map", {})
-
-        _capture_cursor_movements(current_mode)
 
         info_message = t(
             "tab2_mode_info",
