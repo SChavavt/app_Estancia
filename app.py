@@ -99,6 +99,8 @@ LANGUAGE_CONTENT = {
         "tab2_ab_step_three": "Final step: Choose your favorite between the two finalists.",
         "tab2_ab_finalists": "Finalists: {first} vs {second}.",
         "smartscore_recommended": "Rec. prod. • Compat. {score:.0f}\u202f%",
+        "tab2_seq_confirm_instruction": "Confirm your selection to continue.",
+        "tab2_confirm_selection": "Confirm selection",
     },
     "Español": {
         "page_title": "🧠 Smart Core – Cuestionario",
@@ -170,6 +172,8 @@ LANGUAGE_CONTENT = {
         "tab2_ab_step_three": "Paso final: Elige tu favorito entre los dos finalistas.",
         "tab2_ab_finalists": "Finalistas: {first} vs {second}.",
         "smartscore_recommended": "Prod. recom. • Compat. {score:.0f}\u202f%",
+        "tab2_seq_confirm_instruction": "Confirma tu selección para continuar.",
+        "tab2_confirm_selection": "Confirmar selección",
     },
 }
 
@@ -911,6 +915,7 @@ def _ensure_mode_initialized(mode: str) -> None:
         mode_state.setdefault("seq_next_clicks", 0)
         mode_state.setdefault("seq_view_start", None)
         mode_state.setdefault("seq_current_image", None)
+        mode_state.setdefault("seq_selection_confirmed", False)
     sessions[mode] = mode_state
     st.session_state["mode_sessions"] = sessions
 
@@ -1997,6 +2002,7 @@ with tab2:
 
     selection_made = False
     is_last_mode = True
+    current_mode: Optional[str] = None
 
     if tab2_can_continue:
         total_modes = len(sequence)
@@ -2004,6 +2010,7 @@ with tab2:
         current_index = max(0, min(current_index, total_modes - 1))
         st.session_state["current_mode_index"] = current_index
         current_mode = sequence[current_index]
+        is_last_mode = current_index == total_modes - 1
 
         _ensure_mode_started(current_mode)
         mode_sessions = st.session_state.get("mode_sessions", {})
@@ -2196,6 +2203,21 @@ with tab2:
                         f"<p class='seq-selection-label'>{html.escape(t('tab2_selected_label'))}</p>",
                         unsafe_allow_html=True,
                     )
+                    st.caption(t("tab2_seq_confirm_instruction"))
+                    if st.button(
+                        t("tab2_confirm_selection"),
+                        key=f"confirm_{current_mode}_{index}",
+                        use_container_width=True,
+                    ):
+                        current_state["seq_selection_confirmed"] = True
+                        mode_sessions[current_mode] = current_state
+                        st.session_state["mode_sessions"] = mode_sessions
+                        if is_last_mode:
+                            if not st.session_state.get("experiment_completed"):
+                                _complete_visual_experiment(usuario_activo)
+                        else:
+                            _advance_visual_mode()
+                        _trigger_streamlit_rerun()
 
                 st.markdown(
                     f"<p class='seq-product-position'>{html.escape(t('tab2_product_position', current=index + 1, total=total_images))}</p>",
@@ -2214,6 +2236,7 @@ with tab2:
                     mode_sessions = st.session_state.get("mode_sessions", {})
                     current_state = mode_sessions.get(current_mode, current_state)
                     current_state["navigation_index"] = index
+                    current_state["seq_selection_confirmed"] = False
                     mode_sessions[current_mode] = current_state
                     st.session_state["mode_sessions"] = mode_sessions
                     st.session_state["last_selection_feedback"] = current_image.stem
@@ -2225,23 +2248,26 @@ with tab2:
                     st.session_state["mode_sessions"] = mode_sessions
                     _trigger_streamlit_rerun()
 
-        selection_made = bool(current_state.get("selected"))
-        is_last_mode = current_index == total_modes - 1
+        if current_mode == "Sequential":
+            selection_made = bool(current_state.get("seq_selection_confirmed"))
+        else:
+            selection_made = bool(current_state.get("selected"))
 
-    if not is_last_mode:
-        if st.button(
-            t("tab2_next_mode"),
-            key=f"next_mode_{current_mode}",
-            disabled=not selection_made,
-        ):
-            _advance_visual_mode()
-    else:
-        if (
-            selection_made
-            and not st.session_state.get("experiment_completed")
-        ):
-            _complete_visual_experiment(usuario_activo)
-            _trigger_streamlit_rerun()
+    if tab2_can_continue and current_mode and current_mode != "Sequential":
+        if not is_last_mode:
+            if st.button(
+                t("tab2_next_mode"),
+                key=f"next_mode_{current_mode}",
+                disabled=not selection_made,
+            ):
+                _advance_visual_mode()
+        else:
+            if (
+                selection_made
+                and not st.session_state.get("experiment_completed")
+            ):
+                _complete_visual_experiment(usuario_activo)
+                _trigger_streamlit_rerun()
 
 
 def asignar_grupos_experimentales():
