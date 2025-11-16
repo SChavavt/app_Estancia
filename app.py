@@ -1996,6 +1996,8 @@ with tab2:
 
             if st.button(t("tab2_restart_experiment"), key="restart_experiment"):
                 _reset_visual_experiment_state()
+                st.session_state["experiment_start_time"] = datetime.now()
+                st.session_state["experiment_end_time"] = None
                 _trigger_streamlit_rerun()
 
             tab2_can_continue = False
