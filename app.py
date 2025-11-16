@@ -2409,6 +2409,23 @@ def asignar_grupos_experimentales():
 
 with tab_admin:
     st.header("🛠️ Panel de Administración")
+    st.session_state.setdefault("admin_authenticated", False)
+
+    if not st.session_state["admin_authenticated"]:
+        st.info("Esta pestaña es solo para administradores.")
+        admin_password = st.text_input(
+            "Ingresa la contraseña para continuar",
+            type="password",
+            key="admin_password_input",
+        )
+        if st.button("Acceder", key="admin_login_button"):
+            if admin_password == "Chava":
+                st.session_state["admin_authenticated"] = True
+                st.success("Acceso concedido. Puedes continuar.")
+            else:
+                st.error("Contraseña incorrecta. Intenta nuevamente.")
+        st.stop()
+
     st.caption("Asignación automática de grupos experimentales equilibrados.")
     st.subheader("Asignación automática de grupos experimentales")
 
