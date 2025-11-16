@@ -92,8 +92,8 @@ LANGUAGE_CONTENT = {
         "tab2_select_to_continue": "Select a product to enable the next step.",
         "tab2_next_mode": "Next mode ▶️",
         "tab2_finish_experiment": "Finish experiment",
-        "tab2_grid_instruction": "📋 Grid tips: Compare every product at once and click ‘Choose this product’ under your favorite.",
-        "tab2_seq_instruction": "📋 Sequential tips: Use Previous/Next to revisit any product and press ‘Choose this product’ when ready.",
+        "tab2_grid_instruction": "Compare every product at once and click ‘Choose this product’ under your favorite.",
+        "tab2_seq_instruction": "Use Previous/Next to revisit any product and press ‘Choose this product’ when ready.",
         "tab2_ab_step_one": "Step 1 of 3: Choose your favorite from the first pair.",
         "tab2_ab_step_two": "Step 2 of 3: Choose your favorite from the second pair.",
         "tab2_ab_step_three": "Final step: Choose your favorite between the two finalists.",
@@ -163,8 +163,8 @@ LANGUAGE_CONTENT = {
         "tab2_select_to_continue": "Selecciona un producto para habilitar el siguiente paso.",
         "tab2_next_mode": "Siguiente modo ▶️",
         "tab2_finish_experiment": "Finalizar experimento",
-        "tab2_grid_instruction": "📋 Consejos Grid: Compara todos los productos a la vez y haz clic en ‘Elegir este producto’ debajo de tu favorito.",
-        "tab2_seq_instruction": "📋 Consejos secuencial: Usa Anterior/Siguiente para volver a cualquier producto e indica tu elección con ‘Elegir este producto’.",
+        "tab2_grid_instruction": "Compara todos los productos a la vez y haz clic en ‘Elegir este producto’ debajo de tu favorito.",
+        "tab2_seq_instruction": "Usa Anterior/Siguiente para volver a cualquier producto e indica tu elección con ‘Elegir este producto’.",
         "tab2_ab_step_one": "Paso 1 de 3: Elige tu favorito del primer par.",
         "tab2_ab_step_two": "Paso 2 de 3: Elige tu favorito del segundo par.",
         "tab2_ab_step_three": "Paso final: Elige tu favorito entre los dos finalistas.",
@@ -2021,7 +2021,8 @@ with tab2:
 
         ab_stage = current_state.get("ab_stage", 0)
         ab_finalists = current_state.get("ab_final_options", [])
-        stage_messages = []
+        inline_stage_messages = []
+        block_stage_messages = []
 
         next_clicked = False
 
@@ -2034,14 +2035,14 @@ with tab2:
             ab_finalists = current_state.get("ab_final_options", ab_finalists)
 
             if ab_stage == 0:
-                stage_messages.append(t("tab2_ab_step_one"))
+                block_stage_messages.append(t("tab2_ab_step_one"))
             elif ab_stage == 1:
-                stage_messages.append(t("tab2_ab_step_two"))
+                block_stage_messages.append(t("tab2_ab_step_two"))
             else:
                 if len(ab_finalists) == 2:
                     first_finalist = ab_finalists[0].replace("_", " ")
                     second_finalist = ab_finalists[1].replace("_", " ")
-                    stage_messages.append(
+                    block_stage_messages.append(
                         t(
                             "tab2_ab_finalists",
                             first=first_finalist,
@@ -2049,15 +2050,19 @@ with tab2:
                         )
                     )
                 if not current_state.get("selected"):
-                    stage_messages.append(t("tab2_ab_step_three"))
+                    block_stage_messages.append(t("tab2_ab_step_three"))
 
         if current_mode == "Grid":
-            stage_messages.append(t("tab2_grid_instruction"))
+            inline_stage_messages.append(t("tab2_grid_instruction"))
         elif current_mode == "Sequential":
-            stage_messages.append(t("tab2_seq_instruction"))
+            inline_stage_messages.append(t("tab2_seq_instruction"))
 
-        if stage_messages:
-            info_message = f"{info_message}\n\n" + "\n".join(stage_messages)
+        if inline_stage_messages:
+            info_message = f"{info_message}  " + "  ".join(inline_stage_messages)
+
+        if block_stage_messages:
+            separator = "\n\n" if inline_stage_messages else "\n\n"
+            info_message = f"{info_message}{separator}" + "\n".join(block_stage_messages)
 
         st.info(info_message)
 
