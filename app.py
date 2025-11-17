@@ -1541,6 +1541,288 @@ def _experiment_results_to_excel_bytes(summary_df: pd.DataFrame) -> bytes:
     return buffer.getvalue()
 
 
+def _sanitize_participant_id(df_app: pd.DataFrame) -> str:
+    candidate_columns = [
+        "Participante_ID",
+        "ID",
+        "Nombre",
+        "Nombre Completo",
+        "participant_id",
+    ]
+    participant_value: Optional[str] = None
+    for column in candidate_columns:
+        if column in df_app.columns:
+            serie = df_app[column].dropna()
+            if not serie.empty:
+                participant_value = str(serie.iloc[0])
+                break
+    if not participant_value:
+        participant_value = "participante"
+    sanitized = re.sub(r"[^A-Za-z0-9_-]+", "_", participant_value)
+    sanitized = sanitized.strip("_")
+    return sanitized or "participante"
+
+
+def _parse_aoi_payload(aoi_payload) -> dict[str, dict]:
+    if aoi_payload is None or (isinstance(aoi_payload, float) and np.isnan(aoi_payload)):
+        return {}
+    parsed = aoi_payload
+    if isinstance(aoi_payload, str):
+        aoi_payload = aoi_payload.strip()
+        if not aoi_payload:
+            return {}
+        try:
+            parsed = json.loads(aoi_payload)
+        except json.JSONDecodeError:
+            return {}
+    if isinstance(parsed, list):
+        result: dict[str, dict] = {}
+        for entry in parsed:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("name") or entry.get("producto") or entry.get("Producto")
+            if not name:
+                continue
+            result[str(name)] = entry
+        return result
+    if isinstance(parsed, dict):
+        return parsed
+    return {}
+
+
+def _first_float(data: dict, keys: list[str]) -> Optional[float]:
+    for key in keys:
+        if key in data and data[key] is not None:
+            try:
+                return float(data[key])
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def _aoi_bounds_from_dict(raw_data: dict) -> Optional[dict[str, float]]:
+    if not isinstance(raw_data, dict):
+        return None
+    x_min = _first_float(raw_data, ["x_min", "xmin", "left", "x"])
+    y_min = _first_float(raw_data, ["y_min", "ymin", "top", "y"])
+    x_max = _first_float(raw_data, ["x_max", "xmax", "right"])
+    y_max = _first_float(raw_data, ["y_max", "ymax", "bottom"])
+    width = _first_float(raw_data, ["width", "ancho"])
+    height = _first_float(raw_data, ["height", "alto"])
+    if x_min is None or y_min is None:
+        return None
+    if x_max is None and width is not None:
+        x_max = x_min + width
+    if y_max is None and height is not None:
+        y_max = y_min + height
+    if x_max is None or y_max is None:
+        return None
+    return {
+        "x_min": min(x_min, x_max),
+        "x_max": max(x_min, x_max),
+        "y_min": min(y_min, y_max),
+        "y_max": max(y_min, y_max),
+    }
+
+
+def _point_inside_bounds(x: float, y: float, bounds: dict[str, float]) -> bool:
+    return (
+        x is not None
+        and y is not None
+        and bounds["x_min"] <= x <= bounds["x_max"]
+        and bounds["y_min"] <= y <= bounds["y_max"]
+    )
+
+
+def procesar_integracion_app_pupil(
+    excel_app_df: pd.DataFrame, gaze_df: pd.DataFrame, world_timestamps: np.ndarray
+) -> dict:
+    if not isinstance(world_timestamps, np.ndarray):
+        world_timestamps = np.array(world_timestamps)
+    df_app = excel_app_df.copy()
+    df_gaze = gaze_df.copy()
+
+    if "confidence" in df_gaze.columns:
+        df_gaze["confidence"] = pd.to_numeric(df_gaze["confidence"], errors="coerce")
+        df_gaze = df_gaze[df_gaze["confidence"] >= 0.6]
+
+    timestamp_col = None
+    for candidate in ["timestamp", "gaze_timestamp", "world_timestamp", "time", "ts"]:
+        if candidate in df_gaze.columns:
+            timestamp_col = candidate
+            break
+    if timestamp_col is None:
+        raise ValueError("El archivo gaze_positions.csv no contiene una columna de tiempo reconocida.")
+
+    df_gaze["timestamp"] = pd.to_numeric(df_gaze[timestamp_col], errors="coerce")
+    df_gaze = df_gaze.dropna(subset=["timestamp"])
+
+    x_col = None
+    for candidate in ["norm_pos_x", "x", "gaze_x", "px", "world_x"]:
+        if candidate in df_gaze.columns:
+            x_col = candidate
+            break
+    y_col = None
+    for candidate in ["norm_pos_y", "y", "gaze_y", "py", "world_y"]:
+        if candidate in df_gaze.columns:
+            y_col = candidate
+            break
+    if x_col is None:
+        df_gaze["norm_pos_x"] = np.nan
+    else:
+        df_gaze["norm_pos_x"] = pd.to_numeric(df_gaze[x_col], errors="coerce")
+    if y_col is None:
+        df_gaze["norm_pos_y"] = np.nan
+    else:
+        df_gaze["norm_pos_y"] = pd.to_numeric(df_gaze[y_col], errors="coerce")
+
+    df_gaze = df_gaze.sort_values("timestamp").reset_index(drop=True)
+    df_gaze["dt"] = df_gaze["timestamp"].shift(-1) - df_gaze["timestamp"]
+    median_dt = df_gaze["dt"].median()
+    if pd.isna(median_dt):
+        median_dt = 0.0
+    df_gaze["dt"] = df_gaze["dt"].fillna(median_dt)
+    df_gaze.loc[df_gaze["dt"] < 0, "dt"] = 0
+
+    aoi_framewise_rows: list[dict] = []
+    analisis_rows: list[dict] = []
+    integracion_rows: list[dict] = []
+
+    def _timestamp_from_frame(frame_index: int) -> float:
+        if len(world_timestamps) == 0:
+            return 0.0
+        frame_index = max(0, min(int(frame_index), len(world_timestamps) - 1))
+        return float(world_timestamps[frame_index])
+
+    for _, fila in df_app.iterrows():
+        modo = str(fila.get("Modo", "")).strip() or "Desconocido"
+        producto_seleccionado = fila.get("Producto Seleccionado")
+        frame_inicio = int(fila.get("Frame_inicio", 0))
+        frame_fin = int(fila.get("Frame_fin", frame_inicio))
+        timestamp_start = _timestamp_from_frame(frame_inicio)
+        timestamp_end = _timestamp_from_frame(frame_fin)
+        if timestamp_end < timestamp_start:
+            timestamp_start, timestamp_end = timestamp_end, timestamp_start
+
+        aois_dict = _parse_aoi_payload(fila.get("AOIs"))
+        bounds_by_name = {
+            str(nombre): bounds
+            for nombre, raw_bounds in aois_dict.items()
+            if (bounds := _aoi_bounds_from_dict(raw_bounds)) is not None
+        }
+
+        modo_gaze = df_gaze[
+            (df_gaze["timestamp"] >= timestamp_start)
+            & (df_gaze["timestamp"] <= timestamp_end)
+        ].copy()
+
+        per_aoi_metrics: dict[str, dict] = {
+            nombre: {"dwell_time": 0.0, "fixaciones": 0, "first_look": None}
+            for nombre in bounds_by_name
+        }
+
+        for _, gaze_row in modo_gaze.iterrows():
+            x = gaze_row.get("norm_pos_x")
+            y = gaze_row.get("norm_pos_y")
+            assigned_aoi = "Fuera_AOI"
+            for nombre, bounds in bounds_by_name.items():
+                if _point_inside_bounds(x, y, bounds):
+                    assigned_aoi = nombre
+                    metrics = per_aoi_metrics.setdefault(
+                        nombre, {"dwell_time": 0.0, "fixaciones": 0, "first_look": None}
+                    )
+                    metrics["dwell_time"] += float(gaze_row.get("dt", 0.0))
+                    metrics["fixaciones"] += 1
+                    if metrics["first_look"] is None:
+                        metrics["first_look"] = float(gaze_row.get("timestamp", 0.0))
+                    break
+            aoi_framewise_rows.append(
+                {
+                    "Modo": modo,
+                    "timestamp": gaze_row.get("timestamp"),
+                    "x": x,
+                    "y": y,
+                    "AOI": assigned_aoi,
+                }
+            )
+
+        orden_visita = {
+            nombre: idx + 1
+            for idx, (nombre, _) in enumerate(
+                sorted(
+                    (
+                        (nombre, metrics["first_look"])
+                        for nombre, metrics in per_aoi_metrics.items()
+                        if metrics["first_look"] is not None
+                    ),
+                    key=lambda item: item[1],
+                )
+            )
+        }
+
+        for nombre, metrics in per_aoi_metrics.items():
+            integracion_rows.append(
+                {
+                    "Modo": modo,
+                    "Producto": nombre,
+                    "Dwell_Time": metrics["dwell_time"],
+                    "Fixaciones": metrics["fixaciones"],
+                    "Primera_Mirada": metrics["first_look"],
+                    "Producto_Seleccionado": producto_seleccionado,
+                    "Frame_inicio": frame_inicio,
+                    "Frame_fin": frame_fin,
+                    "Orden_Visita": orden_visita.get(nombre),
+                }
+            )
+
+        analisis_rows.append(
+            {
+                "Modo": modo,
+                "Producto_Seleccionado": producto_seleccionado,
+                "Productos_Vistos": ", ".join(bounds_by_name.keys()),
+                "Tiempo_Total_Modo": sum(
+                    metrics["dwell_time"] for metrics in per_aoi_metrics.values()
+                ),
+                "Fijaciones_Totales": sum(
+                    metrics["fixaciones"] for metrics in per_aoi_metrics.values()
+                ),
+                "Timestamp_Inicio": timestamp_start,
+                "Timestamp_Fin": timestamp_end,
+            }
+        )
+
+    df_aoi_framewise = pd.DataFrame(aoi_framewise_rows)
+    df_integracion_full = pd.DataFrame(integracion_rows)
+    df_analisis_por_modo = pd.DataFrame(analisis_rows)
+
+    return {
+        "df_app": df_app,
+        "df_gaze": df_gaze,
+        "df_aoi_framewise": df_aoi_framewise,
+        "df_analisis_por_modo": df_analisis_por_modo,
+        "df_integracion_full": df_integracion_full,
+    }
+
+
+def exportar_excel_final(result_dict: dict) -> bytes:
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        for sheet_name, key in [
+            ("Resumen_App", "df_app"),
+            ("Gaze_Raw_Usado", "df_gaze"),
+            ("AOI_Framewise", "df_aoi_framewise"),
+            ("Analisis_Por_Modo", "df_analisis_por_modo"),
+            ("Integracion_Full", "df_integracion_full"),
+        ]:
+            df = result_dict.get(key)
+            if isinstance(df, pd.DataFrame) and not df.empty:
+                df.to_excel(writer, sheet_name=sheet_name, index=False)
+            else:
+                pd.DataFrame().to_excel(writer, sheet_name=sheet_name, index=False)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
 def append_record_to_results(
     repo, ruta_archivo: str, nuevo_registro: pd.DataFrame, persona_nombre: str
 ) -> None:
@@ -2443,6 +2725,11 @@ def asignar_grupos_experimentales():
 with tab_admin:
     st.header("🛠️ Panel de Administración")
     st.session_state.setdefault("admin_authenticated", False)
+    st.session_state.setdefault("analysis_app_excel", None)
+    st.session_state.setdefault("analysis_gaze", None)
+    st.session_state.setdefault("analysis_timestamps", None)
+    st.session_state.setdefault("analysis_video", None)
+    st.session_state.setdefault("analysis_result", None)
 
     if not st.session_state["admin_authenticated"]:
         st.info("Esta pestaña es solo para administradores.")
@@ -2472,3 +2759,161 @@ with tab_admin:
                     "msg", "Ocurrió un error durante la asignación de grupos."
                 )
             )
+
+    st.divider()
+    st.subheader("📊 Análisis del Experimento – Integración App + Pupil Labs")
+    st.caption(
+        "Combina los datos generados por la app del experimento visual con los archivos esenciales de Pupil Labs."
+    )
+
+    col_excel, col_gaze = st.columns(2)
+    with col_excel:
+        excel_upload = st.file_uploader(
+            "Excel de la app (hoja 'Resumen')",
+            type=["xlsx"],
+            key="analysis_excel_uploader",
+        )
+        if excel_upload is not None:
+            st.session_state["analysis_app_excel"] = excel_upload.getvalue()
+            st.success("Excel cargado correctamente.")
+        elif st.session_state.get("analysis_app_excel"):
+            st.info("Excel listo para analizar.")
+    with col_gaze:
+        gaze_upload = st.file_uploader(
+            "gaze_positions.csv",
+            type=["csv"],
+            key="analysis_gaze_uploader",
+        )
+        if gaze_upload is not None:
+            st.session_state["analysis_gaze"] = gaze_upload.getvalue()
+            st.success("Gaze positions cargado.")
+        elif st.session_state.get("analysis_gaze"):
+            st.info("Archivo gaze_positions listo.")
+
+    col_ts, col_video = st.columns(2)
+    with col_ts:
+        timestamps_upload = st.file_uploader(
+            "world_timestamps.npy",
+            type=["npy"],
+            key="analysis_timestamps_uploader",
+        )
+        if timestamps_upload is not None:
+            st.session_state["analysis_timestamps"] = timestamps_upload.getvalue()
+            st.success("Timestamps cargados.")
+        elif st.session_state.get("analysis_timestamps"):
+            st.info("Archivo world_timestamps listo.")
+    with col_video:
+        video_upload = st.file_uploader(
+            "world.mp4 (opcional)",
+            type=["mp4"],
+            key="analysis_video_uploader",
+        )
+        if video_upload is not None:
+            st.session_state["analysis_video"] = video_upload.getvalue()
+            st.success("Video cargado.")
+        elif st.session_state.get("analysis_video"):
+            st.info("Video listo para mostrar.")
+
+    if st.button("🚀 Ejecutar análisis del participante"):
+        archivos_obligatorios = {
+            "analysis_app_excel": "Excel del experimento",
+            "analysis_gaze": "gaze_positions.csv",
+            "analysis_timestamps": "world_timestamps.npy",
+        }
+        faltantes = [
+            nombre
+            for clave, nombre in archivos_obligatorios.items()
+            if not st.session_state.get(clave)
+        ]
+        if faltantes:
+            st.error(
+                "Faltan archivos obligatorios para procesar: "
+                + ", ".join(faltantes)
+            )
+        else:
+            try:
+                excel_df = pd.read_excel(
+                    BytesIO(st.session_state["analysis_app_excel"]),
+                    sheet_name="Resumen",
+                )
+                gaze_df = pd.read_csv(BytesIO(st.session_state["analysis_gaze"]))
+                world_timestamps = np.load(
+                    BytesIO(st.session_state["analysis_timestamps"]),
+                    allow_pickle=False,
+                )
+                st.session_state["analysis_result"] = procesar_integracion_app_pupil(
+                    excel_df, gaze_df, world_timestamps
+                )
+                st.success("Análisis completado. Revisa los resultados debajo.")
+            except Exception as error:
+                st.error(f"No se pudo procesar el análisis: {error}")
+
+    analysis_result = st.session_state.get("analysis_result")
+    if analysis_result:
+        participant_id = _sanitize_participant_id(analysis_result.get("df_app", pd.DataFrame()))
+        excel_final = exportar_excel_final(analysis_result)
+        st.download_button(
+            "📥 Descargar Excel Final del Participante",
+            data=excel_final,
+            file_name=f"Analisis_Participante_{participant_id}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="analysis_download_button",
+        )
+
+        df_integracion = analysis_result.get("df_integracion_full", pd.DataFrame())
+        df_analisis_modo = analysis_result.get("df_analisis_por_modo", pd.DataFrame())
+        df_gaze_filtrado = analysis_result.get("df_gaze", pd.DataFrame())
+
+        if not df_integracion.empty:
+            tiempo_total = (
+                df_integracion.groupby("Producto", as_index=False)["Dwell_Time"].sum()
+            )
+            fijaciones_total = (
+                df_integracion.groupby("Producto", as_index=False)["Fixaciones"].sum()
+            )
+
+            st.markdown("#### Tablas de atención por producto")
+            col_time, col_fix = st.columns(2)
+            with col_time:
+                st.markdown("**Tiempo total por producto**")
+                st.dataframe(tiempo_total)
+            with col_fix:
+                st.markdown("**Fijaciones por producto**")
+                st.dataframe(fijaciones_total)
+
+            st.markdown("#### Distribución de dwell-time")
+            if not tiempo_total.empty:
+                chart_data = tiempo_total.set_index("Producto")
+                st.bar_chart(chart_data)
+
+            st.markdown("#### Resumen de participación")
+            productos_vistos = ", ".join(
+                sorted(filter(None, df_integracion["Producto"].dropna().unique()))
+            )
+            modos_completados = ", ".join(
+                sorted(filter(None, df_integracion["Modo"].dropna().unique()))
+            )
+            total_dwell = df_integracion["Dwell_Time"].sum()
+            st.markdown(
+                f"- **Productos vistos:** {productos_vistos or 'Sin registros'}\n"
+                f"- **Modos completados:** {modos_completados or 'Sin registros'}\n"
+                f"- **Dwell-time acumulado:** {total_dwell:.2f} segundos"
+            )
+
+        if isinstance(df_analisis_modo, pd.DataFrame) and not df_analisis_modo.empty:
+            st.markdown("#### Análisis consolidado por modo")
+            st.dataframe(df_analisis_modo)
+
+        if isinstance(df_gaze_filtrado, pd.DataFrame) and not df_gaze_filtrado.empty:
+            heatmap_df = df_gaze_filtrado.dropna(subset=["norm_pos_x", "norm_pos_y"]).copy()
+            if not heatmap_df.empty:
+                heatmap_df = heatmap_df.rename(
+                    columns={"norm_pos_x": "X", "norm_pos_y": "Y", "dt": "Duracion"}
+                )
+                st.markdown("#### Heatmap (puntos) del recorrido visual")
+                st.caption("Cada punto representa una muestra válida de gaze dentro del rango analizado.")
+                st.scatter_chart(heatmap_df, x="X", y="Y")
+
+        if st.session_state.get("analysis_video"):
+            st.markdown("#### Preview de world.mp4")
+            st.video(st.session_state["analysis_video"])
