@@ -31,8 +31,8 @@ DEFAULT_LANGUAGE = "English"
 LANGUAGE_CONTENT = {
     "English": {
         "page_title": "🧠 Smart Core – Questionnaire",
-        "page_caption": "Share your name, age, and gender, answer the questionnaire, and receive your personalized SmartScore.",
-        "intro_text": "Use this short form to tell us what matters most when choosing instant food products so we can tailor your SmartScore recommendations.",
+        "page_caption": "Share your name, age, and gender, answer the questionnaire, and help us prepare your personalized SmartScore for future experiments.",
+        "intro_text": "Use this short form to tell us what matters most when choosing instant food products so we can fine-tune the SmartScore you'll likely see in upcoming experiments (instead of immediately).",
         "questionnaire_header": "Preference questionnaire",
         "respondent_data_subheader": "Respondent details",
         "name_label": "Full name",
@@ -104,8 +104,8 @@ LANGUAGE_CONTENT = {
     },
     "Español": {
         "page_title": "🧠 Smart Core – Cuestionario",
-        "page_caption": "Comparte tu nombre, edad y género, responde el cuestionario para poder obtener tu SmartScore personalizado.",
-        "intro_text": "Este breve cuestionario nos ayuda a entender qué valoras al elegir productos de comida instantánea y nos permite personalizar tu SmartScore.",
+        "page_caption": "Comparte tu nombre, edad y género, responde el cuestionario y ayúdanos a preparar tu SmartScore personalizado para futuros experimentos.",
+        "intro_text": "Este breve cuestionario nos ayuda a entender qué valoras al elegir productos de comida instantánea y a ajustar el SmartScore que probablemente verás en experimentos posteriores (no de inmediato).",
         "questionnaire_header": "Cuestionario de preferencias",
         "respondent_data_subheader": "Datos de quien responde",
         "name_label": "Nombre completo",
