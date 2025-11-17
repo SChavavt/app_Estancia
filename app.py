@@ -1542,25 +1542,18 @@ def _experiment_results_to_excel_bytes(summary_df: pd.DataFrame) -> bytes:
 
 
 def _sanitize_participant_id(df_app: pd.DataFrame) -> str:
-    candidate_columns = [
-        "Participante_ID",
-        "ID",
-        "Nombre",
-        "Nombre Completo",
-        "participant_id",
-    ]
-    participant_value: Optional[str] = None
-    for column in candidate_columns:
-        if column in df_app.columns:
-            serie = df_app[column].dropna()
-            if not serie.empty:
-                participant_value = str(serie.iloc[0])
-                break
-    if not participant_value:
-        participant_value = "participante"
-    sanitized = re.sub(r"[^A-Za-z0-9_-]+", "_", participant_value)
+    """Return a safe identifier for filenames based on the participant ID."""
+
+    if "ID_Participante" not in df_app.columns or df_app.empty:
+        return "sin_id"
+
+    raw_value = df_app["ID_Participante"].iloc[0]
+    if pd.isna(raw_value):
+        return "sin_id"
+
+    sanitized = re.sub(r"[^A-Za-z0-9_-]+", "_", str(raw_value).strip())
     sanitized = sanitized.strip("_")
-    return sanitized or "participante"
+    return sanitized or "sin_id"
 
 
 def _parse_aoi_payload(aoi_payload) -> dict[str, dict]:
@@ -1634,170 +1627,229 @@ def _point_inside_bounds(x: float, y: float, bounds: dict[str, float]) -> bool:
     )
 
 
+
 def procesar_integracion_app_pupil(
     excel_app_df: pd.DataFrame, gaze_df: pd.DataFrame, world_timestamps: np.ndarray
 ) -> dict:
-    if not isinstance(world_timestamps, np.ndarray):
-        world_timestamps = np.array(world_timestamps)
+    """Integrate the Smart Core app summary with Pupil Labs outputs."""
+
+    if world_timestamps is None:
+        raise ValueError("Archivo world_timestamps.npy inválido o no cargado.")
+
+    world_timestamps = np.asarray(world_timestamps).flatten()
+    if world_timestamps.size == 0:
+        raise ValueError("world_timestamps.npy está vacío.")
+
     df_app = excel_app_df.copy()
-    df_gaze = gaze_df.copy()
+    gaze_df = gaze_df.copy()
 
-    if "confidence" in df_gaze.columns:
-        df_gaze["confidence"] = pd.to_numeric(df_gaze["confidence"], errors="coerce")
-        df_gaze = df_gaze[df_gaze["confidence"] >= 0.6]
+    def _first_available_column(frame: pd.DataFrame, candidates: list[str]) -> Optional[str]:
+        for candidate in candidates:
+            if candidate in frame.columns:
+                return candidate
+        return None
 
-    timestamp_col = None
-    for candidate in ["timestamp", "gaze_timestamp", "world_timestamp", "time", "ts"]:
-        if candidate in df_gaze.columns:
-            timestamp_col = candidate
-            break
+    timestamp_col = _first_available_column(
+        gaze_df,
+        ["timestamp", "gaze_timestamp", "world_timestamp", "time", "ts"],
+    )
     if timestamp_col is None:
-        raise ValueError("El archivo gaze_positions.csv no contiene una columna de tiempo reconocida.")
-
-    df_gaze["timestamp"] = pd.to_numeric(df_gaze[timestamp_col], errors="coerce")
-    df_gaze = df_gaze.dropna(subset=["timestamp"])
-
-    x_col = None
-    for candidate in ["norm_pos_x", "x", "gaze_x", "px", "world_x"]:
-        if candidate in df_gaze.columns:
-            x_col = candidate
-            break
-    y_col = None
-    for candidate in ["norm_pos_y", "y", "gaze_y", "py", "world_y"]:
-        if candidate in df_gaze.columns:
-            y_col = candidate
-            break
-    if x_col is None:
-        df_gaze["norm_pos_x"] = np.nan
-    else:
-        df_gaze["norm_pos_x"] = pd.to_numeric(df_gaze[x_col], errors="coerce")
-    if y_col is None:
-        df_gaze["norm_pos_y"] = np.nan
-    else:
-        df_gaze["norm_pos_y"] = pd.to_numeric(df_gaze[y_col], errors="coerce")
-
-    df_gaze = df_gaze.sort_values("timestamp").reset_index(drop=True)
-    df_gaze["dt"] = df_gaze["timestamp"].shift(-1) - df_gaze["timestamp"]
-    median_dt = df_gaze["dt"].median()
-    if pd.isna(median_dt):
-        median_dt = 0.0
-    df_gaze["dt"] = df_gaze["dt"].fillna(median_dt)
-    df_gaze.loc[df_gaze["dt"] < 0, "dt"] = 0
-
-    aoi_framewise_rows: list[dict] = []
-    analisis_rows: list[dict] = []
-    integracion_rows: list[dict] = []
-
-    def _timestamp_from_frame(frame_index: int) -> float:
-        if len(world_timestamps) == 0:
-            return 0.0
-        frame_index = max(0, min(int(frame_index), len(world_timestamps) - 1))
-        return float(world_timestamps[frame_index])
-
-    for _, fila in df_app.iterrows():
-        modo = str(fila.get("Modo", "")).strip() or "Desconocido"
-        producto_seleccionado = fila.get("Producto Seleccionado")
-        frame_inicio = int(fila.get("Frame_inicio", 0))
-        frame_fin = int(fila.get("Frame_fin", frame_inicio))
-        timestamp_start = _timestamp_from_frame(frame_inicio)
-        timestamp_end = _timestamp_from_frame(frame_fin)
-        if timestamp_end < timestamp_start:
-            timestamp_start, timestamp_end = timestamp_end, timestamp_start
-
-        aois_dict = _parse_aoi_payload(fila.get("AOIs"))
-        bounds_by_name = {
-            str(nombre): bounds
-            for nombre, raw_bounds in aois_dict.items()
-            if (bounds := _aoi_bounds_from_dict(raw_bounds)) is not None
-        }
-
-        modo_gaze = df_gaze[
-            (df_gaze["timestamp"] >= timestamp_start)
-            & (df_gaze["timestamp"] <= timestamp_end)
-        ].copy()
-
-        per_aoi_metrics: dict[str, dict] = {
-            nombre: {"dwell_time": 0.0, "fixaciones": 0, "first_look": None}
-            for nombre in bounds_by_name
-        }
-
-        for _, gaze_row in modo_gaze.iterrows():
-            x = gaze_row.get("norm_pos_x")
-            y = gaze_row.get("norm_pos_y")
-            assigned_aoi = "Fuera_AOI"
-            for nombre, bounds in bounds_by_name.items():
-                if _point_inside_bounds(x, y, bounds):
-                    assigned_aoi = nombre
-                    metrics = per_aoi_metrics.setdefault(
-                        nombre, {"dwell_time": 0.0, "fixaciones": 0, "first_look": None}
-                    )
-                    metrics["dwell_time"] += float(gaze_row.get("dt", 0.0))
-                    metrics["fixaciones"] += 1
-                    if metrics["first_look"] is None:
-                        metrics["first_look"] = float(gaze_row.get("timestamp", 0.0))
-                    break
-            aoi_framewise_rows.append(
-                {
-                    "Modo": modo,
-                    "timestamp": gaze_row.get("timestamp"),
-                    "x": x,
-                    "y": y,
-                    "AOI": assigned_aoi,
-                }
-            )
-
-        orden_visita = {
-            nombre: idx + 1
-            for idx, (nombre, _) in enumerate(
-                sorted(
-                    (
-                        (nombre, metrics["first_look"])
-                        for nombre, metrics in per_aoi_metrics.items()
-                        if metrics["first_look"] is not None
-                    ),
-                    key=lambda item: item[1],
-                )
-            )
-        }
-
-        for nombre, metrics in per_aoi_metrics.items():
-            integracion_rows.append(
-                {
-                    "Modo": modo,
-                    "Producto": nombre,
-                    "Dwell_Time": metrics["dwell_time"],
-                    "Fixaciones": metrics["fixaciones"],
-                    "Primera_Mirada": metrics["first_look"],
-                    "Producto_Seleccionado": producto_seleccionado,
-                    "Frame_inicio": frame_inicio,
-                    "Frame_fin": frame_fin,
-                    "Orden_Visita": orden_visita.get(nombre),
-                }
-            )
-
-        analisis_rows.append(
-            {
-                "Modo": modo,
-                "Producto_Seleccionado": producto_seleccionado,
-                "Productos_Vistos": ", ".join(bounds_by_name.keys()),
-                "Tiempo_Total_Modo": sum(
-                    metrics["dwell_time"] for metrics in per_aoi_metrics.values()
-                ),
-                "Fijaciones_Totales": sum(
-                    metrics["fixaciones"] for metrics in per_aoi_metrics.values()
-                ),
-                "Timestamp_Inicio": timestamp_start,
-                "Timestamp_Fin": timestamp_end,
-            }
+        raise ValueError(
+            "gaze_positions.csv debe incluir una columna de tiempo reconocida (timestamp)."
         )
 
-    df_aoi_framewise = pd.DataFrame(aoi_framewise_rows)
-    df_integracion_full = pd.DataFrame(integracion_rows)
-    df_analisis_por_modo = pd.DataFrame(analisis_rows)
+    x_col = _first_available_column(
+        gaze_df,
+        ["norm_pos_x", "x", "gaze_x", "world_x", "px", "norm_pos_x [0]"]
+    )
+    y_col = _first_available_column(
+        gaze_df,
+        ["norm_pos_y", "y", "gaze_y", "world_y", "py", "norm_pos_y [1]"]
+    )
+    conf_col = _first_available_column(
+        gaze_df,
+        ["confidence", "gaze_confidence", "probability", "conf"],
+    )
+
+    normalized = pd.DataFrame()
+    normalized["timestamp"] = pd.to_numeric(
+        gaze_df[timestamp_col], errors="coerce"
+    )
+    normalized["norm_pos_x"] = (
+        pd.to_numeric(gaze_df[x_col], errors="coerce") if x_col else np.nan
+    )
+    normalized["norm_pos_y"] = (
+        pd.to_numeric(gaze_df[y_col], errors="coerce") if y_col else np.nan
+    )
+    if conf_col:
+        normalized["confidence"] = pd.to_numeric(
+            gaze_df[conf_col], errors="coerce"
+        ).fillna(0)
+    else:
+        normalized["confidence"] = 1.0
+
+    normalized = normalized.dropna(subset=["timestamp"]).copy()
+    normalized = normalized[normalized["confidence"] >= 0.6]
+    normalized = normalized.sort_values("timestamp").reset_index(drop=True)
+    normalized["dt"] = normalized["timestamp"].diff().clip(lower=0, upper=1)
+    normalized["dt"].fillna(0.016, inplace=True)
+    df_gaze_filtrado = normalized.copy()
+
+    rows_framewise: list[dict] = []
+    rows_modo: list[dict] = []
+    rows_integracion: list[dict] = []
+
+    def _parse_aois(raw_value, row_number: int) -> dict:
+        if raw_value is None or (isinstance(raw_value, float) and np.isnan(raw_value)):
+            raise ValueError(f"Fila {row_number}: no hay AOIs definidos.")
+        try:
+            parsed = json.loads(raw_value) if isinstance(raw_value, str) else raw_value
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Fila {row_number}: AOIs con formato inválido ({exc}).")
+        if not isinstance(parsed, dict) or not parsed:
+            raise ValueError(f"Fila {row_number}: AOIs vacíos.")
+        cleaned = {}
+        for nombre, bounds in parsed.items():
+            if not isinstance(bounds, dict):
+                continue
+            try:
+                cleaned[nombre] = {
+                    "x_min": float(bounds["x_min"]),
+                    "y_min": float(bounds["y_min"]),
+                    "x_max": float(bounds["x_max"]),
+                    "y_max": float(bounds["y_max"]),
+                }
+            except (KeyError, TypeError, ValueError):
+                raise ValueError(
+                    f"Fila {row_number}: AOI '{nombre}' no tiene límites numéricos válidos."
+                )
+        if not cleaned:
+            raise ValueError(f"Fila {row_number}: no se pudo leer ninguna AOI válida.")
+        return cleaned
+
+    def _timestamp_from_frame(frame_value, total_frames: int, label: str, row_number: int):
+        try:
+            frame_index = int(frame_value)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"Fila {row_number}: el valor de {label} no es un número de frame válido."
+            )
+        if frame_index < 0 or frame_index >= total_frames:
+            raise ValueError(
+                f"Fila {row_number}: el frame {label} ({frame_index}) está fuera de rango."
+            )
+        timestamp = world_timestamps[frame_index]
+        if not np.isfinite(timestamp):
+            raise ValueError(
+                f"Fila {row_number}: el timestamp asociado al frame {label} es inválido."
+            )
+        return float(timestamp)
+
+    def detectar_aoi(x_val: float, y_val: float, aois: dict) -> Optional[str]:
+        if x_val is None or y_val is None:
+            return None
+        for nombre, box in aois.items():
+            if (
+                box["x_min"] <= x_val <= box["x_max"]
+                and box["y_min"] <= y_val <= box["y_max"]
+            ):
+                return nombre
+        return None
+
+    total_frames = world_timestamps.shape[0]
+
+    for row_idx, fila in df_app.iterrows():
+        modo = str(fila.get("Modo", "")).strip() or "Desconocido"
+        producto_seleccionado = fila.get("Producto Seleccionado", "")
+        aois = _parse_aois(fila.get("AOIs"), row_idx + 1)
+
+        frame_inicio = fila.get("Frame_inicio")
+        frame_fin = fila.get("Frame_fin")
+        t_start = _timestamp_from_frame(frame_inicio, total_frames, "inicio", row_idx + 1)
+        t_end = _timestamp_from_frame(frame_fin, total_frames, "fin", row_idx + 1)
+        if t_end < t_start:
+            raise ValueError(
+                f"Fila {row_idx + 1}: timestamps imposibles (fin menor que inicio)."
+            )
+
+        gaze_seg = df_gaze_filtrado[
+            (df_gaze_filtrado["timestamp"] >= t_start)
+            & (df_gaze_filtrado["timestamp"] <= t_end)
+        ].copy()
+
+        segment_rows: list[dict] = []
+        for _, gaze_point in gaze_seg.iterrows():
+            aoi_name = detectar_aoi(
+                gaze_point.get("norm_pos_x"),
+                gaze_point.get("norm_pos_y"),
+                aois,
+            )
+            record = {
+                "timestamp": gaze_point["timestamp"],
+                "x": gaze_point.get("norm_pos_x"),
+                "y": gaze_point.get("norm_pos_y"),
+                "dt": gaze_point.get("dt", 0.0),
+                "AOI": aoi_name,
+                "Modo": modo,
+                "Producto_Seleccionado": producto_seleccionado,
+            }
+            segment_rows.append(record)
+            rows_framewise.append(record)
+
+        segment_df = pd.DataFrame(segment_rows)
+
+        for producto in aois.keys():
+            if segment_df.empty:
+                dwell_time = 0.0
+                fixaciones = 0
+                primera_mirada = np.nan
+            else:
+                mask = segment_df["AOI"] == producto
+                dwell_time = float(segment_df.loc[mask, "dt"].sum())
+                fixaciones = int(mask.sum())
+                primera_mirada = (
+                    float(segment_df.loc[mask, "timestamp"].min())
+                    if mask.any()
+                    else np.nan
+                )
+            metric_row = {
+                "Modo": modo,
+                "Producto": producto,
+                "Dwell_Time": dwell_time,
+                "Fixaciones": fixaciones,
+                "Primera_Mirada": primera_mirada,
+            }
+            rows_modo.append(metric_row)
+            rows_integracion.append(
+                metric_row
+                | {
+                    "Producto_Seleccionado": producto_seleccionado,
+                }
+            )
+
+    df_aoi_framewise = pd.DataFrame(rows_framewise)
+    expected_metrics_cols = [
+        "Modo",
+        "Producto",
+        "Dwell_Time",
+        "Fixaciones",
+        "Primera_Mirada",
+    ]
+    df_analisis_por_modo = (
+        pd.DataFrame(rows_modo).reindex(columns=expected_metrics_cols)
+        if rows_modo
+        else pd.DataFrame(columns=expected_metrics_cols)
+    )
+    integracion_cols = expected_metrics_cols + ["Producto_Seleccionado"]
+    df_integracion_full = (
+        pd.DataFrame(rows_integracion).reindex(columns=integracion_cols)
+        if rows_integracion
+        else pd.DataFrame(columns=integracion_cols)
+    )
 
     return {
         "df_app": df_app,
-        "df_gaze": df_gaze,
+        "df_gaze": df_gaze_filtrado,
         "df_aoi_framewise": df_aoi_framewise,
         "df_analisis_por_modo": df_analisis_por_modo,
         "df_integracion_full": df_integracion_full,
@@ -1805,20 +1857,24 @@ def procesar_integracion_app_pupil(
 
 
 def exportar_excel_final(result_dict: dict) -> bytes:
+    """Create the Excel workbook required by the admin dashboard."""
+
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        for sheet_name, key in [
+        sheet_map = [
             ("Resumen_App", "df_app"),
             ("Gaze_Raw_Usado", "df_gaze"),
             ("AOI_Framewise", "df_aoi_framewise"),
             ("Analisis_Por_Modo", "df_analisis_por_modo"),
             ("Integracion_Full", "df_integracion_full"),
-        ]:
-            df = result_dict.get(key)
-            if isinstance(df, pd.DataFrame) and not df.empty:
-                df.to_excel(writer, sheet_name=sheet_name, index=False)
+        ]
+        for sheet_name, key in sheet_map:
+            df_value = result_dict.get(key)
+            if isinstance(df_value, pd.DataFrame) and not df_value.empty:
+                df_value.to_excel(writer, sheet_name=sheet_name, index=False)
             else:
                 pd.DataFrame().to_excel(writer, sheet_name=sheet_name, index=False)
+
     buffer.seek(0)
     return buffer.getvalue()
 
