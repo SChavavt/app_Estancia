@@ -32,7 +32,7 @@ LANGUAGE_CONTENT = {
     "English": {
         "page_title": "🧠 Smart Core – Questionnaire",
         "page_caption": "Share your name, age, and gender, answer the questionnaire, and help us prepare your personalized SmartScore for future experiments.",
-        "intro_text": "Use this short form to tell us what matters most when choosing instant food products so we can fine-tune the SmartScore you'll likely see in upcoming experiments (instead of immediately).",
+        "intro_text": "Use this short form to tell us what matters most when choosing instant food products so we can fine-tune the SmartScore you'll likely see in upcoming experiments.",
         "questionnaire_header": "Preference questionnaire",
         "respondent_data_subheader": "Respondent details",
         "name_label": "Full name",
