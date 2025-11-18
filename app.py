@@ -9,7 +9,7 @@ import time
 import unicodedata
 from difflib import SequenceMatcher
 from io import BytesIO
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Any
 
@@ -890,6 +890,8 @@ def _ensure_mode_initialized(mode: str) -> None:
             mode_state.setdefault("seq_next_clicks", 0)
             mode_state.setdefault("seq_view_start", None)
             mode_state.setdefault("seq_current_image", None)
+            mode_state.setdefault("seq_product_frames", {})
+            mode_state.setdefault("seq_first_view_order", [])
             sessions[mode] = mode_state
             st.session_state["mode_sessions"] = sessions
         return
@@ -915,6 +917,8 @@ def _ensure_mode_initialized(mode: str) -> None:
         mode_state.setdefault("seq_next_clicks", 0)
         mode_state.setdefault("seq_view_start", None)
         mode_state.setdefault("seq_current_image", None)
+        mode_state.setdefault("seq_product_frames", {})
+        mode_state.setdefault("seq_first_view_order", [])
         mode_state.setdefault("seq_selection_confirmed", False)
     sessions[mode] = mode_state
     st.session_state["mode_sessions"] = sessions
@@ -938,6 +942,8 @@ def _ensure_seq_view_state(mode_state: dict, current_image: Optional[Path]) -> d
     durations: dict = mode_state.setdefault("seq_product_durations", {})
     visits: dict = mode_state.setdefault("seq_product_visits", {})
     history: list = mode_state.setdefault("seq_navigation_history", [])
+    frames: dict = mode_state.setdefault("seq_product_frames", {})
+    view_order: list = mode_state.setdefault("seq_first_view_order", [])
     current_stem = current_image.stem
     last_stem = mode_state.get("seq_current_image")
     view_start: Optional[datetime] = mode_state.get("seq_view_start")
@@ -954,9 +960,17 @@ def _ensure_seq_view_state(mode_state: dict, current_image: Optional[Path]) -> d
                     "image": last_stem,
                 }
             )
+            if last_stem in frames:
+                frames[last_stem]["end"] = now
         mode_state["seq_current_image"] = current_stem
         mode_state["seq_view_start"] = now
         visits[current_stem] = visits.get(current_stem, 0) + 1
+        frame_entry = frames.setdefault(current_stem, {})
+        if "start" not in frame_entry or frame_entry.get("start") is None:
+            frame_entry["start"] = now
+        frame_entry["end"] = now
+        if current_stem not in view_order:
+            view_order.append(current_stem)
         history.append(
             {
                 "timestamp": now.isoformat(),
@@ -967,6 +981,12 @@ def _ensure_seq_view_state(mode_state: dict, current_image: Optional[Path]) -> d
     elif view_start is None:
         mode_state["seq_view_start"] = now
         visits[current_stem] = visits.get(current_stem, 0) + 1
+        frame_entry = frames.setdefault(current_stem, {})
+        if "start" not in frame_entry or frame_entry.get("start") is None:
+            frame_entry["start"] = now
+        frame_entry["end"] = now
+        if current_stem not in view_order:
+            view_order.append(current_stem)
         history.append(
             {
                 "timestamp": now.isoformat(),
@@ -981,6 +1001,7 @@ def _record_seq_navigation(mode_state: dict, new_index: int, action: str) -> Non
     now = datetime.now()
     durations: dict = mode_state.setdefault("seq_product_durations", {})
     history: list = mode_state.setdefault("seq_navigation_history", [])
+    frames: dict = mode_state.setdefault("seq_product_frames", {})
     current_stem = mode_state.get("seq_current_image")
     view_start: Optional[datetime] = mode_state.get("seq_view_start")
     if current_stem and view_start:
@@ -994,6 +1015,10 @@ def _record_seq_navigation(mode_state: dict, new_index: int, action: str) -> Non
                 "image": current_stem,
             }
         )
+        frame_entry = frames.setdefault(current_stem, {})
+        if "start" not in frame_entry or frame_entry.get("start") is None:
+            frame_entry["start"] = view_start
+        frame_entry["end"] = now
     if action == "prev":
         mode_state["seq_back_clicks"] = mode_state.get("seq_back_clicks", 0) + 1
     elif action == "next":
@@ -1017,6 +1042,7 @@ def _finalize_sequential_state(mode_state: dict) -> None:
         now = datetime.now()
         durations: dict = mode_state.setdefault("seq_product_durations", {})
         history: list = mode_state.setdefault("seq_navigation_history", [])
+        frames: dict = mode_state.setdefault("seq_product_frames", {})
         durations[current_stem] = durations.get(current_stem, 0.0) + (
             now - view_start
         ).total_seconds()
@@ -1027,6 +1053,10 @@ def _finalize_sequential_state(mode_state: dict) -> None:
                 "image": current_stem,
             }
         )
+        frame_entry = frames.setdefault(current_stem, {})
+        if "start" not in frame_entry or frame_entry.get("start") is None:
+            frame_entry["start"] = view_start
+        frame_entry["end"] = now
         mode_state["seq_view_start"] = None
 
 
@@ -1226,11 +1256,16 @@ def _advance_visual_mode() -> None:
 
 
 def obtener_aoi_layout(
-    modo: str, productos_visibles: list[str], tiene_smartcore: bool
+    modo: str,
+    productos_visibles: list[str],
+    tiene_smartcore: bool,
+    pantalla_id: Optional[str] = None,
 ) -> dict:
     """Genera AOIs solo para los productos visibles en la pantalla actual."""
 
-    layout: dict[str, list[float]] = {}
+    block_name = pantalla_id or modo
+    layout: dict[str, dict[str, list[float]]] = {block_name: {}}
+    block_entries = layout[block_name]
 
     def _normalize_entry(entry: Any) -> tuple[str, bool]:
         nombre = ""
@@ -1262,7 +1297,7 @@ def obtener_aoi_layout(
         if not nombre or not coords or len(coords) != 4:
             return
         try:
-            layout[f"{nombre}_{suffix}"] = [float(value) for value in coords]
+            block_entries[f"{nombre}_{suffix}"] = [float(value) for value in coords]
         except (TypeError, ValueError):
             return
 
@@ -1317,11 +1352,26 @@ def obtener_aoi_layout(
     return layout
 
 
+def _flatten_aoi_blocks(aois: Any) -> dict:
+    if not isinstance(aois, dict):
+        return {}
+    flat: dict = {}
+    for key, value in aois.items():
+        if isinstance(value, dict):
+            for inner_key, inner_value in value.items():
+                flat[inner_key] = inner_value
+        else:
+            flat[key] = value
+    return flat
+
+
 def calcular_atencion_recomendado(aois, gaze_data, recomendado):
     # aois es el dict generado en AOIs
     # gaze_data viene de state.get("gaze_history", [])
     if not recomendado:
         return {"tiempo": None, "fijaciones": None, "primera_mirada": None}
+
+    normalized_aois = _flatten_aoi_blocks(aois)
 
     def _extract_bbox(entry):
         if isinstance(entry, dict):
@@ -1363,9 +1413,9 @@ def calcular_atencion_recomendado(aois, gaze_data, recomendado):
     candidate_keys.append(f"{recomendado}_smartcore")
     bbox = None
     for key in candidate_keys:
-        if key not in aois:
+        if key not in normalized_aois:
             continue
-        bbox = _extract_bbox(aois[key])
+        bbox = _extract_bbox(normalized_aois[key])
         if bbox:
             break
     if not bbox:
@@ -1465,6 +1515,167 @@ def _get_visible_products_by_screen(mode: str, state: dict) -> list[dict[str, li
         options = state.get("options", []) or []
         if options:
             screens.append({"label": mode, "productos": [str(option) for option in options]})
+    return screens
+
+
+def _default_mode_start_time(state: dict) -> Optional[datetime]:
+    start_time = state.get("start_time")
+    return start_time if isinstance(start_time, datetime) else None
+
+
+def _default_mode_end_time(state: dict) -> Optional[datetime]:
+    for key in ("completion_timestamp", "selection_timestamp"):
+        value = state.get(key)
+        if isinstance(value, datetime):
+            return value
+    return None
+
+
+def _resolve_stage_times(
+    stage_label: str,
+    next_stage_label: Optional[str],
+    stage_starts: dict,
+    stage_durations: dict,
+    default_start: Optional[datetime],
+    default_end: Optional[datetime],
+) -> tuple[Optional[datetime], Optional[datetime]]:
+    start_time = stage_starts.get(stage_label)
+    if not isinstance(start_time, datetime):
+        start_time = default_start
+    end_time = None
+    duration_value = stage_durations.get(stage_label)
+    if isinstance(duration_value, (int, float)) and start_time:
+        end_time = start_time + timedelta(seconds=float(duration_value))
+    if end_time is None and next_stage_label:
+        next_start = stage_starts.get(next_stage_label)
+        if isinstance(next_start, datetime):
+            end_time = next_start
+    if end_time is None:
+        end_time = default_end or start_time
+    return start_time, end_time
+
+
+def _build_screen_timeline(mode: str, state: dict) -> list[dict[str, Any]]:
+    screens: list[dict[str, Any]] = []
+    default_start = _default_mode_start_time(state)
+    default_end = _default_mode_end_time(state)
+
+    if mode == "A/B":
+        images: list[Path] = state.get("images", [])
+        pairs: list[tuple[int, int]] = state.get("ab_pairs", []) or []
+        stage_starts: dict = state.get("ab_stage_starts", {}) or {}
+        stage_durations: dict = state.get("ab_stage_durations", {}) or {}
+        finalists: list[str] = []
+        raw_finalists = state.get("ab_final_options", []) or []
+        if len(raw_finalists) == 2:
+            finalists = [str(entry) for entry in raw_finalists]
+        else:
+            winner_indexes: list[int] = state.get("ab_winner_indexes", []) or []
+            for idx in winner_indexes[:2]:
+                if 0 <= idx < len(images):
+                    finalists.append(images[idx].stem)
+        stage_map = [
+            ("pair_1", "A/B · Par 1", "A/B-Par1"),
+            ("pair_2", "A/B · Par 2", "A/B-Par2"),
+            ("final", "A/B · Final", "A/B-Final"),
+        ]
+        stage_products: dict[str, list[str]] = {}
+        for idx, pair in enumerate(pairs[:2]):
+            label = f"pair_{idx + 1}"
+            product_names: list[str] = []
+            for product_index in pair:
+                if isinstance(product_index, int) and 0 <= product_index < len(images):
+                    product_names.append(images[product_index].stem)
+            stage_products[label] = product_names
+        if len(finalists) == 2:
+            stage_products["final"] = finalists
+
+        for current_idx, (stage_label, label, pantalla_id) in enumerate(stage_map):
+            products = stage_products.get(stage_label, [])
+            if not products:
+                continue
+            next_label: Optional[str] = None
+            if current_idx + 1 < len(stage_map):
+                next_label = stage_map[current_idx + 1][0]
+            start_time, end_time = _resolve_stage_times(
+                stage_label,
+                next_label,
+                stage_starts,
+                stage_durations,
+                default_start,
+                default_end,
+            )
+            screens.append(
+                {
+                    "label": label,
+                    "pantalla_id": pantalla_id,
+                    "productos": products,
+                    "start_time": start_time or default_start,
+                    "end_time": end_time or default_end or start_time,
+                }
+            )
+        return screens
+
+    if mode == "Grid":
+        products = [img.stem for img in state.get("images", [])[:4]]
+        if not products:
+            options = state.get("options", []) or []
+            products = [str(option) for option in options[:4]]
+        if products:
+            screens.append(
+                {
+                    "label": "Grid",
+                    "pantalla_id": "Grid-1",
+                    "productos": products,
+                    "start_time": default_start,
+                    "end_time": default_end or default_start,
+                }
+            )
+        return screens
+
+    if mode == "Sequential":
+        view_order: list[str] = state.get("seq_first_view_order", []) or []
+        if not view_order:
+            images: list[Path] = state.get("images", [])
+            view_order = [img.stem for img in images]
+        frames_map: dict = state.get("seq_product_frames", {}) or {}
+        for idx, product in enumerate(view_order, start=1):
+            if not product:
+                continue
+            frame_entry = frames_map.get(product, {}) or {}
+            start_time = frame_entry.get("start")
+            end_time = frame_entry.get("end")
+            if not isinstance(start_time, datetime):
+                start_time = default_start
+            if not isinstance(end_time, datetime):
+                end_time = default_end or start_time
+            if start_time and end_time and end_time < start_time:
+                end_time = start_time
+            label = f"Sequential · {product}" if product else f"Sequential · Producto {idx}"
+            pantalla_id = f"Seq-{idx}"
+            screens.append(
+                {
+                    "label": label,
+                    "pantalla_id": pantalla_id,
+                    "productos": [product],
+                    "start_time": start_time or default_start,
+                    "end_time": end_time or start_time or default_end,
+                }
+            )
+        return screens
+
+    fallback = _get_visible_products_by_screen(mode, state)
+    for index, screen in enumerate(fallback, start=1):
+        label = screen.get("label", mode)
+        screens.append(
+            {
+                "label": label,
+                "pantalla_id": f"{mode}-{index}",
+                "productos": screen.get("productos", []),
+                "start_time": default_start,
+                "end_time": default_end or default_start,
+            }
+        )
     return screens
 
 
@@ -1591,20 +1802,41 @@ def _build_experiment_results(
         pantalla_layout = obtener_layout_modo(mode, state)
         inicio_s = base_record["Inicio del modo (s)"]
         fin_s = base_record["Momento de finalización (s)"]
-        screen_views = _get_visible_products_by_screen(mode, state)
+        screen_views = _build_screen_timeline(mode, state)
         if not screen_views:
             screen_views = [
-                {"label": mode, "productos": state.get("options", []) or []}
+                {
+                    "label": mode,
+                    "pantalla_id": f"{mode}-1",
+                    "productos": state.get("options", []) or [],
+                    "start_time": _default_mode_start_time(state),
+                    "end_time": _default_mode_end_time(state),
+                }
             ]
 
-        for screen in screen_views:
+        def _seconds_from_value(value: Any, fallback: Optional[float]) -> Optional[float]:
+            if isinstance(value, datetime):
+                return value.timestamp()
+            if isinstance(value, (int, float)):
+                return float(value)
+            return fallback
+
+        for idx, screen in enumerate(screen_views, start=1):
             screen_products = [str(prod) for prod in screen.get("productos", [])]
+            pantalla_id = str(screen.get("pantalla_id") or f"{mode}-{idx}")
             record = base_record.copy()
             record["Pantalla_mostrada"] = pantalla_layout
             record["Pantalla"] = screen.get("label", "")
+            record["Pantalla_ID"] = pantalla_id
             record["Productos visibles en pantalla"] = ", ".join(screen_products)
-            record["Frame_inicio"] = buscar_frame(inicio_s)
-            record["Frame_fin"] = buscar_frame(fin_s)
+            frame_start_seconds = _seconds_from_value(screen.get("start_time"), inicio_s)
+            frame_end_seconds = _seconds_from_value(screen.get("end_time"), fin_s)
+            if frame_start_seconds is None and frame_end_seconds is not None:
+                frame_start_seconds = frame_end_seconds
+            if frame_end_seconds is None and frame_start_seconds is not None:
+                frame_end_seconds = frame_start_seconds
+            record["Frame_inicio"] = buscar_frame(frame_start_seconds)
+            record["Frame_fin"] = buscar_frame(frame_end_seconds)
 
             productos_visibles = [
                 {
@@ -1619,6 +1851,7 @@ def _build_experiment_results(
                 modo=mode,
                 productos_visibles=productos_visibles,
                 tiene_smartcore=smartscore_enabled,
+                pantalla_id=pantalla_id,
             )
 
             if smartscore_enabled:
@@ -1632,24 +1865,7 @@ def _build_experiment_results(
             record["Atencion_Recomendado_Fijaciones"] = atn["fijaciones"]
             record["Atencion_Recomendado_PrimeraMirada"] = atn["primera_mirada"]
 
-            aois_dict = {}
-            for nombre, bounds in aois.items():
-                if isinstance(bounds, (list, tuple)) and len(bounds) >= 4:
-                    try:
-                        aois_dict[nombre] = [float(value) for value in bounds[:4]]
-                    except (TypeError, ValueError):
-                        continue
-                elif isinstance(bounds, dict):
-                    try:
-                        aois_dict[nombre] = [
-                            float(bounds.get("x_min")),
-                            float(bounds.get("y_min")),
-                            float(bounds.get("x_max")),
-                            float(bounds.get("y_max")),
-                        ]
-                    except (TypeError, ValueError):
-                        continue
-            record["AOIs"] = json.dumps(aois_dict, ensure_ascii=False)
+            record["AOIs"] = json.dumps(aois, ensure_ascii=False)
 
             if mode == "A/B":
                 stage_durations = state.get("ab_stage_durations", {})
@@ -1967,7 +2183,7 @@ def procesar_integracion_app_pupil(
     df_gaze_filtrado = normalized.copy()
 
     rows_framewise: list[dict] = []
-    rows_modo: list[dict] = []
+    rows_pantalla: list[dict] = []
     rows_integracion: list[dict] = []
 
     def _normalize_bounds(bounds) -> Optional[dict[str, float]]:
@@ -1995,14 +2211,35 @@ def procesar_integracion_app_pupil(
             raise ValueError(f"Fila {row_number}: AOIs con formato inválido ({exc}).")
         if not isinstance(parsed, dict) or not parsed:
             raise ValueError(f"Fila {row_number}: AOIs vacíos.")
-        cleaned = {}
-        for nombre, bounds in parsed.items():
-            normalized = _normalize_bounds(bounds)
-            if not normalized:
+        cleaned: dict[str, dict] = {}
+        treat_as_flat = all(_normalize_bounds(bounds) for bounds in parsed.values())
+        if treat_as_flat:
+            block_entries: dict = {}
+            for nombre, bounds in parsed.items():
+                normalized = _normalize_bounds(bounds)
+                if not normalized:
+                    continue
+                block_entries[str(nombre)] = normalized
+            if not block_entries:
                 raise ValueError(
-                    f"Fila {row_number}: AOI '{nombre}' no tiene límites numéricos válidos."
+                    f"Fila {row_number}: no se pudo leer ninguna AOI válida."
                 )
-            cleaned[nombre] = normalized
+            cleaned["default"] = block_entries
+            return cleaned
+
+        for block_name, block_data in parsed.items():
+            if not isinstance(block_data, dict):
+                continue
+            normalized_block: dict[str, dict] = {}
+            for nombre, bounds in block_data.items():
+                normalized = _normalize_bounds(bounds)
+                if not normalized:
+                    raise ValueError(
+                        f"Fila {row_number}: AOI '{nombre}' no tiene límites numéricos válidos."
+                    )
+                normalized_block[str(nombre)] = normalized
+            if normalized_block:
+                cleaned[str(block_name)] = normalized_block
         if not cleaned:
             raise ValueError(f"Fila {row_number}: no se pudo leer ninguna AOI válida.")
         return cleaned
@@ -2042,6 +2279,21 @@ def procesar_integracion_app_pupil(
         modo = str(fila.get("Modo", "")).strip() or "Desconocido"
         producto_seleccionado = fila.get("Producto Seleccionado", "")
         aois = _parse_aois(fila.get("AOIs"), row_idx + 1)
+        pantalla_id = str(fila.get("Pantalla_ID") or "").strip()
+        if not pantalla_id:
+            raise ValueError(
+                f"Fila {row_idx + 1}: falta el identificador único de pantalla (Pantalla_ID)."
+            )
+        if pantalla_id not in aois:
+            available = ", ".join(sorted(aois.keys()))
+            raise ValueError(
+                f"Fila {row_idx + 1}: Pantalla_ID '{pantalla_id}' no coincide con los AOIs disponibles ({available})."
+            )
+        block_aois = aois.get(pantalla_id, {})
+        if not block_aois:
+            raise ValueError(
+                f"Fila {row_idx + 1}: la pantalla '{pantalla_id}' no contiene AOIs definidos."
+            )
 
         frame_inicio = fila.get("Frame_inicio")
         frame_fin = fila.get("Frame_fin")
@@ -2062,7 +2314,7 @@ def procesar_integracion_app_pupil(
             aoi_name = detectar_aoi(
                 gaze_point.get("norm_pos_x"),
                 gaze_point.get("norm_pos_y"),
-                aois,
+                block_aois,
             )
             record = {
                 "timestamp": gaze_point["timestamp"],
@@ -2072,19 +2324,21 @@ def procesar_integracion_app_pupil(
                 "AOI": aoi_name,
                 "Modo": modo,
                 "Producto_Seleccionado": producto_seleccionado,
+                "Pantalla_ID": pantalla_id,
+                "Pantalla": fila.get("Pantalla", ""),
             }
             segment_rows.append(record)
             rows_framewise.append(record)
 
         segment_df = pd.DataFrame(segment_rows)
 
-        for producto in aois.keys():
+        for aoi_name in block_aois.keys():
             if segment_df.empty:
                 dwell_time = 0.0
                 fixaciones = 0
                 primera_mirada = np.nan
             else:
-                mask = segment_df["AOI"] == producto
+                mask = segment_df["AOI"] == aoi_name
                 dwell_time = float(segment_df.loc[mask, "dt"].sum())
                 fixaciones = int(mask.sum())
                 primera_mirada = (
@@ -2092,14 +2346,23 @@ def procesar_integracion_app_pupil(
                     if mask.any()
                     else np.nan
                 )
+            if "_" in aoi_name:
+                producto, componente = aoi_name.rsplit("_", 1)
+            else:
+                producto, componente = aoi_name, ""
             metric_row = {
                 "Modo": modo,
+                "Pantalla_ID": pantalla_id,
+                "Pantalla": fila.get("Pantalla", ""),
                 "Producto": producto,
+                "Componente": componente,
                 "Dwell_Time": dwell_time,
                 "Fixaciones": fixaciones,
                 "Primera_Mirada": primera_mirada,
+                "Frame_inicio": frame_inicio,
+                "Frame_fin": frame_fin,
             }
-            rows_modo.append(metric_row)
+            rows_pantalla.append(metric_row)
             rows_integracion.append(
                 metric_row
                 | {
@@ -2108,20 +2371,40 @@ def procesar_integracion_app_pupil(
             )
 
     df_aoi_framewise = pd.DataFrame(rows_framewise)
-    expected_metrics_cols = [
+    pantalla_cols = [
         "Modo",
+        "Pantalla_ID",
+        "Pantalla",
         "Producto",
+        "Componente",
         "Dwell_Time",
         "Fixaciones",
         "Primera_Mirada",
+        "Frame_inicio",
+        "Frame_fin",
     ]
-    df_analisis_por_modo = (
-        pd.DataFrame(rows_modo).reindex(columns=expected_metrics_cols)
-        if rows_modo
-        else pd.DataFrame(columns=expected_metrics_cols)
+    df_por_pantalla = (
+        pd.DataFrame(rows_pantalla).reindex(columns=pantalla_cols)
+        if rows_pantalla
+        else pd.DataFrame(columns=pantalla_cols)
     )
-    integracion_cols = expected_metrics_cols + ["Producto_Seleccionado"]
-    df_integracion_full = (
+    modo_cols = ["Modo", "Producto", "Componente", "Dwell_Time", "Fixaciones", "Primera_Mirada"]
+    if not df_por_pantalla.empty:
+        df_por_modo = (
+            df_por_pantalla.groupby(["Modo", "Producto", "Componente"], as_index=False)
+            .agg(
+                {
+                    "Dwell_Time": "sum",
+                    "Fixaciones": "sum",
+                    "Primera_Mirada": "min",
+                }
+            )
+            .reindex(columns=modo_cols)
+        )
+    else:
+        df_por_modo = pd.DataFrame(columns=modo_cols)
+    integracion_cols = pantalla_cols + ["Producto_Seleccionado"]
+    df_integracion_completa = (
         pd.DataFrame(rows_integracion).reindex(columns=integracion_cols)
         if rows_integracion
         else pd.DataFrame(columns=integracion_cols)
@@ -2131,8 +2414,9 @@ def procesar_integracion_app_pupil(
         "df_app": df_app,
         "df_gaze": df_gaze_filtrado,
         "df_aoi_framewise": df_aoi_framewise,
-        "df_analisis_por_modo": df_analisis_por_modo,
-        "df_integracion_full": df_integracion_full,
+        "df_por_pantalla": df_por_pantalla,
+        "df_por_modo": df_por_modo,
+        "df_integracion_completa": df_integracion_completa,
     }
 
 
@@ -2145,8 +2429,9 @@ def exportar_excel_final(result_dict: dict) -> bytes:
             ("Resumen_App", "df_app"),
             ("Gaze_Raw_Usado", "df_gaze"),
             ("AOI_Framewise", "df_aoi_framewise"),
-            ("Analisis_Por_Modo", "df_analisis_por_modo"),
-            ("Integracion_Full", "df_integracion_full"),
+            ("Analisis_Por_Pantalla", "df_por_pantalla"),
+            ("Analisis_Por_Modo", "df_por_modo"),
+            ("Integracion_Completa", "df_integracion_completa"),
         ]
         for sheet_name, key in sheet_map:
             df_value = result_dict.get(key)
@@ -3210,8 +3495,13 @@ with tab_admin:
             key="analysis_download_button",
         )
 
-        df_integracion = analysis_result.get("df_integracion_full", pd.DataFrame())
-        df_analisis_modo = analysis_result.get("df_analisis_por_modo", pd.DataFrame())
+        df_integracion = analysis_result.get(
+            "df_integracion_completa", pd.DataFrame()
+        )
+        df_analisis_pantalla = analysis_result.get(
+            "df_por_pantalla", pd.DataFrame()
+        )
+        df_analisis_modo = analysis_result.get("df_por_modo", pd.DataFrame())
         df_gaze_filtrado = analysis_result.get("df_gaze", pd.DataFrame())
 
         if not df_integracion.empty:
@@ -3249,6 +3539,10 @@ with tab_admin:
                 f"- **Modos completados:** {modos_completados or 'Sin registros'}\n"
                 f"- **Dwell-time acumulado:** {total_dwell:.2f} segundos"
             )
+
+        if isinstance(df_analisis_pantalla, pd.DataFrame) and not df_analisis_pantalla.empty:
+            st.markdown("#### Análisis detallado por pantalla")
+            st.dataframe(df_analisis_pantalla)
 
         if isinstance(df_analisis_modo, pd.DataFrame) and not df_analisis_modo.empty:
             st.markdown("#### Análisis consolidado por modo")
