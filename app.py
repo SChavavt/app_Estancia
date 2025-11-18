@@ -1366,6 +1366,51 @@ def _build_experiment_results(
             else None,
             "Duración total experimento (s)": experiment_duration,
         }
+        # =======================================
+        # NUEVAS COLUMNAS PARA MODO A/B (compacto)
+        # =======================================
+        if mode == "A/B":
+            pairs = state.get("ab_pairs", [])
+            images = state.get("images", [])
+            ab_choices = state.get("ab_stage_choices", [])
+            finalists = state.get("ab_final_options", [])
+            final_choice = state.get("selected", None)
+
+            # Construir pares como texto
+            def pair_text(pair):
+                if len(pair) != 2:
+                    return None
+                a_idx, b_idx = pair
+                if 0 <= a_idx < len(images) and 0 <= b_idx < len(images):
+                    return f"{images[a_idx].stem} vs {images[b_idx].stem}"
+                return None
+
+            par1 = pair_text(pairs[0]) if len(pairs) > 0 else None
+            par2 = pair_text(pairs[1]) if len(pairs) > 1 else None
+            final_pair = (
+                f"{finalists[0]} vs {finalists[1]}" if len(finalists) == 2 else None
+            )
+
+            record["A/B · Par 1"] = par1
+            record["A/B · Par 1 · Elegida"] = (
+                ab_choices[0] if len(ab_choices) > 0 else None
+            )
+
+            record["A/B · Par 2"] = par2
+            record["A/B · Par 2 · Elegida"] = (
+                ab_choices[1] if len(ab_choices) > 1 else None
+            )
+
+            record["A/B · Final"] = final_pair
+            record["A/B · Final · Elegida"] = final_choice
+
+        else:
+            record["A/B · Par 1"] = None
+            record["A/B · Par 1 · Elegida"] = None
+            record["A/B · Par 2"] = None
+            record["A/B · Par 2 · Elegida"] = None
+            record["A/B · Final"] = None
+            record["A/B · Final · Elegida"] = None
         inicio_s = record["Inicio del modo (s)"]
         fin_s = record["Momento de finalización (s)"]
         record["Frame_inicio"] = buscar_frame(inicio_s)
