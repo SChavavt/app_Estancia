@@ -2270,28 +2270,24 @@ with tab1:
                 t("slider_portion"),
                 0,
                 5,
-                value=st.session_state["w_portion"],
                 key="w_portion",
             )
             w_diet = st.slider(
                 t("slider_diet"),
                 0,
                 7,
-                value=st.session_state["w_diet"],
                 key="w_diet",
             )
             w_salt = st.slider(
                 t("slider_salt"),
                 0,
                 5,
-                value=st.session_state["w_salt"],
                 key="w_salt",
             )
             w_fat = st.slider(
                 t("slider_fat"),
                 0,
                 5,
-                value=st.session_state["w_fat"],
                 key="w_fat",
             )
         with col2:
@@ -2299,21 +2295,18 @@ with tab1:
                 t("slider_natural"),
                 0,
                 5,
-                value=st.session_state["w_natural"],
                 key="w_natural",
             )
             w_convenience = st.slider(
                 t("slider_convenience"),
                 0,
                 5,
-                value=st.session_state["w_convenience"],
                 key="w_convenience",
             )
             w_price = st.slider(
                 t("slider_price"),
                 0,
                 5,
-                value=st.session_state["w_price"],
                 key="w_price",
             )
 
