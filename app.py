@@ -1225,152 +1225,62 @@ def _advance_visual_mode() -> None:
     _trigger_streamlit_rerun()
 
 
-def obtener_aoi_layout(state, modo, participant_group: Optional[str] = None):
-    """Genera AOIs fijas por modo y por producto."""
+def obtener_aoi_layout(state, modo):
+    """
+    Devuelve un dict con bounding boxes por producto.
+    Cada bounding box es [x1, y1, x2, y2] en coordenadas normalizadas 0-1.
+    """
+    aoi_dict = {}
 
-    def _is_smartcore_enabled() -> bool:
-        group = participant_group or st.session_state.get("tab2_user_group")
-        return (group or "").strip().lower() == "con smartscore".lower()
-
-    def _get_image_from_entry(entry) -> Optional[Path]:
-        if entry is None:
-            return None
-        if isinstance(entry, Path):
-            return entry
-        try:
-            return Path(entry)
-        except TypeError:
-            return None
-
-    def _get_stem(image_entry) -> Optional[str]:
-        image_path = _get_image_from_entry(image_entry)
-        if image_path is None:
-            return None
-        return image_path.stem
-
-    def _add_product_aois(stem: Optional[str], coords_map: dict[str, list[float]], aois: dict):
-        if not stem:
-            return
-        for suffix, coords in coords_map.items():
-            aois[f"{stem}_{suffix}"] = coords
-
-    aois: dict[str, list[float]] = {}
-    smartcore_enabled = _is_smartcore_enabled()
-
+    # Para A/B (dos imágenes lado a lado)
     if modo == "A/B":
-        images: list = state.get("images", [])
-        left_img = images[0] if len(images) >= 1 else None
-        right_img = images[1] if len(images) >= 2 else None
+        productos = state.get("images", [])
+        if len(productos) == 2:
+            aoi_dict[productos[0].name] = [0.0, 0.0, 0.5, 1.0]
+            aoi_dict[productos[1].name] = [0.5, 0.0, 1.0, 1.0]
 
-        if left_img:
-            coords = {
-                "pack": [0.00, 0.00, 0.50, 0.60],
-                "claim": [0.00, 0.60, 0.50, 1.00],
-            }
-            if smartcore_enabled:
-                coords["smartcore"] = [0.20, 0.90, 0.30, 1.00]
-            _add_product_aois(_get_stem(left_img), coords, aois)
+    # Para Grid (usando filas × columnas desde state)
+    if modo == "Grid":
+        productos = state.get("images", [])
+        rows = state.get("grid_rows", 2)
+        cols = state.get("grid_cols", 3)
 
-        if right_img:
-            coords = {
-                "pack": [0.50, 0.00, 1.00, 0.60],
-                "claim": [0.50, 0.60, 1.00, 1.00],
-            }
-            if smartcore_enabled:
-                coords["smartcore"] = [0.70, 0.90, 0.80, 1.00]
-            _add_product_aois(_get_stem(right_img), coords, aois)
+        for i, p in enumerate(productos):
+            r = i // cols
+            c = i % cols
+            x1 = c / cols
+            y1 = r / rows
+            x2 = (c + 1) / cols
+            y2 = (r + 1) / rows
+            aoi_dict[p.name] = [x1, y1, x2, y2]
 
-    elif modo == "Grid":
-        images: list = state.get("images", [])
-        grid_positions = [
-            ([0.00, 0.00, 0.50, 0.50], [0.20, 0.45, 0.30, 0.50]),  # P1
-            ([0.50, 0.00, 1.00, 0.50], [0.70, 0.45, 0.80, 0.50]),  # P2
-            ([0.00, 0.50, 0.50, 1.00], [0.20, 0.95, 0.30, 1.00]),  # P3
-            ([0.50, 0.50, 1.00, 1.00], [0.70, 0.95, 0.80, 1.00]),  # P4
-        ]
-        for idx, image in enumerate(images[:4]):
-            pack_coords, smart_coords = grid_positions[idx]
-            coords = {"pack": pack_coords}
-            if smartcore_enabled:
-                coords["smartcore"] = smart_coords
-            _add_product_aois(_get_stem(image), coords, aois)
+    # Para Sequential (solo el producto mostrado)
+    if modo == "Sequential":
+        producto = state.get("current_image")
+        if producto:
+            aoi_dict[producto.name] = [0.0, 0.0, 1.0, 1.0]
 
-    elif modo == "Sequential":
-        images: list = state.get("images", [])
-        seq_current = state.get("seq_current_image")
-        selected_label = state.get("selected")
-
-        def _find_matching_image(label: Optional[str]) -> Optional[Path]:
-            if not label:
-                return None
-            for img in images:
-                if _get_stem(img) == label:
-                    return _get_image_from_entry(img)
-            return None
-
-        target_image = (
-            _find_matching_image(seq_current)
-            or _find_matching_image(selected_label)
-            or (images[0] if images else None)
-        )
-
-        if target_image:
-            coords = {
-                "pack": [0.20, 0.00, 0.80, 0.70],
-                "claim": [0.80, 0.00, 1.00, 1.00],
-                "nutri": [0.00, 0.00, 0.20, 1.00],
-            }
-            if smartcore_enabled:
-                coords["smartcore"] = [0.40, 0.80, 0.60, 0.95]
-            _add_product_aois(_get_stem(target_image), coords, aois)
-
-    return aois
+    return aoi_dict
 
 
 def calcular_atencion_recomendado(aois, gaze_data, recomendado):
     # aois es el dict generado en AOIs
     # gaze_data viene de state.get("gaze_history", [])
-    if not recomendado:
+    if not recomendado or recomendado not in aois:
         return {"tiempo": None, "fijaciones": None, "primera_mirada": None}
 
-    recomendado = str(recomendado).strip()
-    if not recomendado:
-        return {"tiempo": None, "fijaciones": None, "primera_mirada": None}
+    x1, y1, x2, y2 = aois[recomendado]
 
-    relevant_keys = [
-        key
-        for key in aois.keys()
-        if key == recomendado or key.startswith(f"{recomendado}_")
-    ]
-    if not relevant_keys:
-        return {"tiempo": None, "fijaciones": None, "primera_mirada": None}
-
-    boxes: list[tuple[float, float, float, float]] = []
-    for key in relevant_keys:
-        coords = aois.get(key)
-        if not isinstance(coords, (list, tuple)) or len(coords) != 4:
-            continue
-        try:
-            x1, y1, x2, y2 = map(float, coords)
-        except (TypeError, ValueError):
-            continue
-        boxes.append((x1, y1, x2, y2))
-
-    if not boxes:
-        return {"tiempo": None, "fijaciones": None, "primera_mirada": None}
-
-    tiempo = 0.0
+    tiempo = 0
     fijaciones = 0
     primera = None
 
     for g in gaze_data:
-        ts = g.get("t")
-        x = g.get("x")
-        y = g.get("y")
-        if x is None or y is None:
-            continue
+        ts = g["t"]
+        x = g["x"]
+        y = g["y"]
 
-        dentro = any(x1 <= x <= x2 and y1 <= y <= y2 for x1, y1, x2, y2 in boxes)
+        dentro = x >= x1 and x <= x2 and y >= y1 and y <= y2
 
         if dentro:
             tiempo += g.get("dt", 0)
@@ -1506,7 +1416,7 @@ def _build_experiment_results(
         record["Frame_inicio"] = buscar_frame(inicio_s)
         record["Frame_fin"] = buscar_frame(fin_s)
         record["Pantalla_mostrada"] = obtener_layout_modo(mode, state)
-        aois = obtener_aoi_layout(state, mode, participant_group)
+        aois = obtener_aoi_layout(state, mode)
 
         if participant_group == "Con SmartScore":
             atn = calcular_atencion_recomendado(
@@ -1845,38 +1755,19 @@ def procesar_integracion_app_pupil(
             raise ValueError(f"Fila {row_number}: AOIs vacíos.")
         cleaned = {}
         for nombre, bounds in parsed.items():
-            if isinstance(bounds, dict):
-                try:
-                    cleaned[nombre] = {
-                        "x_min": float(bounds["x_min"]),
-                        "y_min": float(bounds["y_min"]),
-                        "x_max": float(bounds["x_max"]),
-                        "y_max": float(bounds["y_max"]),
-                    }
-                except (KeyError, TypeError, ValueError):
-                    raise ValueError(
-                        f"Fila {row_number}: AOI '{nombre}' no tiene límites numéricos válidos."
-                    )
+            if not isinstance(bounds, dict):
                 continue
-
-            if isinstance(bounds, (list, tuple)) and len(bounds) == 4:
-                try:
-                    x1, y1, x2, y2 = map(float, bounds)
-                except (TypeError, ValueError):
-                    raise ValueError(
-                        f"Fila {row_number}: AOI '{nombre}' no tiene coordenadas numéricas válidas."
-                    )
+            try:
                 cleaned[nombre] = {
-                    "x_min": min(x1, x2),
-                    "y_min": min(y1, y2),
-                    "x_max": max(x1, x2),
-                    "y_max": max(y1, y2),
+                    "x_min": float(bounds["x_min"]),
+                    "y_min": float(bounds["y_min"]),
+                    "x_max": float(bounds["x_max"]),
+                    "y_max": float(bounds["y_max"]),
                 }
-                continue
-
-            raise ValueError(
-                f"Fila {row_number}: AOI '{nombre}' debe ser un dict con límites o una lista de 4 valores."
-            )
+            except (KeyError, TypeError, ValueError):
+                raise ValueError(
+                    f"Fila {row_number}: AOI '{nombre}' no tiene límites numéricos válidos."
+                )
         if not cleaned:
             raise ValueError(f"Fila {row_number}: no se pudo leer ninguna AOI válida.")
         return cleaned
