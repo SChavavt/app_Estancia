@@ -11,7 +11,7 @@ from difflib import SequenceMatcher
 from io import BytesIO
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 
 import pandas as pd
 import numpy as np
@@ -1225,94 +1225,96 @@ def _advance_visual_mode() -> None:
     _trigger_streamlit_rerun()
 
 
-def obtener_aoi_layout(state, modo):
-    """
-    Devuelve un dict con bounding boxes por AOI.
-    Cada bounding box es [x1, y1, x2, y2] en coordenadas normalizadas 0-1.
-    """
+def obtener_aoi_layout(
+    modo: str, productos_visibles: list[str], tiene_smartcore: bool
+) -> dict:
+    """Genera AOIs solo para los productos visibles en la pantalla actual."""
 
-    grupo = st.session_state.get("tab2_user_group", "")
-    tiene_smartcore = grupo == "Con SmartScore"
-    aoi_dict: dict[str, list[float]] = {}
+    layout: dict[str, list[float]] = {}
 
-    def _add_aoi_entry(stem: Optional[str], suffix: str, coords: list[float]) -> None:
-        if not stem or not coords or len(coords) != 4:
+    def _normalize_entry(entry: Any) -> tuple[str, bool]:
+        nombre = ""
+        recomendado = False
+        if isinstance(entry, dict):
+            candidate = (
+                entry.get("nombre")
+                or entry.get("name")
+                or entry.get("product")
+                or entry.get("id")
+            )
+            if candidate is not None:
+                nombre = str(candidate).strip()
+            recomendado = bool(
+                entry.get("es_recomendado")
+                or entry.get("recomendado")
+                or entry.get("recommended")
+                or entry.get("highlighted")
+            )
+        elif isinstance(entry, (list, tuple)) and entry:
+            nombre = str(entry[0]).strip()
+            if len(entry) > 1:
+                recomendado = bool(entry[1])
+        else:
+            nombre = str(entry).strip()
+        return nombre, recomendado
+
+    def _add_coords(nombre: str, suffix: str, coords: list[float]) -> None:
+        if not nombre or not coords or len(coords) != 4:
             return
         try:
-            x1, y1, x2, y2 = [float(value) for value in coords]
+            layout[f"{nombre}_{suffix}"] = [float(value) for value in coords]
         except (TypeError, ValueError):
             return
-        key = f"{stem}_{suffix}"
-        aoi_dict[key] = [x1, y1, x2, y2]
 
-    images: list[Path] = state.get("images", []) if isinstance(state, dict) else []
+    normalized: list[tuple[str, bool]] = []
+    for entry in productos_visibles or []:
+        nombre, recomendado = _normalize_entry(entry)
+        if nombre:
+            normalized.append((nombre, recomendado))
 
-    if modo == "A/B" and images:
-        display_indexes = []
-        if isinstance(state, dict):
-            display_indexes = _get_ab_display_indexes(state)
-        if len(display_indexes) != 2:
-            display_indexes = list(range(min(2, len(images))))
-        if len(display_indexes) == 2:
-            left_idx, right_idx = display_indexes
-            left_coords = {
+    if modo == "A/B":
+        slot_coords = [
+            {
                 "pack": [0.00, 0.00, 0.50, 0.60],
                 "claim": [0.00, 0.60, 0.50, 1.00],
                 "smartcore": [0.20, 0.90, 0.30, 1.00],
-            }
-            right_coords = {
+            },
+            {
                 "pack": [0.50, 0.00, 1.00, 0.60],
                 "claim": [0.50, 0.60, 1.00, 1.00],
                 "smartcore": [0.70, 0.90, 0.80, 1.00],
-            }
-
-            if 0 <= left_idx < len(images):
-                stem = images[left_idx].stem
-                _add_aoi_entry(stem, "pack", left_coords["pack"])
-                _add_aoi_entry(stem, "claim", left_coords["claim"])
-                if tiene_smartcore:
-                    _add_aoi_entry(stem, "smartcore", left_coords["smartcore"])
-            if 0 <= right_idx < len(images):
-                stem = images[right_idx].stem
-                _add_aoi_entry(stem, "pack", right_coords["pack"])
-                _add_aoi_entry(stem, "claim", right_coords["claim"])
-                if tiene_smartcore:
-                    _add_aoi_entry(stem, "smartcore", right_coords["smartcore"])
-
-    if modo == "Grid" and images:
-        grid_positions = [
-            (0, [0.00, 0.00, 0.50, 0.50], [0.20, 0.45, 0.30, 0.50]),
-            (1, [0.50, 0.00, 1.00, 0.50], [0.70, 0.45, 0.80, 0.50]),
-            (2, [0.00, 0.50, 0.50, 1.00], [0.20, 0.95, 0.30, 1.00]),
-            (3, [0.50, 0.50, 1.00, 1.00], [0.70, 0.95, 0.80, 1.00]),
+            },
         ]
-        for idx, pack_coords, smart_coords in grid_positions:
-            if idx >= len(images):
-                continue
-            stem = images[idx].stem
-            _add_aoi_entry(stem, "pack", pack_coords)
-            if tiene_smartcore:
-                _add_aoi_entry(stem, "smartcore", smart_coords)
+        for idx, (nombre, recomendado) in enumerate(normalized[:2]):
+            slot = slot_coords[idx]
+            _add_coords(nombre, "pack", slot["pack"])
+            _add_coords(nombre, "claim", slot["claim"])
+            if tiene_smartcore and recomendado:
+                _add_coords(nombre, "smartcore", slot["smartcore"])
 
-    if modo == "Sequential":
-        stem: Optional[str] = None
-        seq_current = state.get("seq_current_image") if isinstance(state, dict) else None
-        if seq_current:
-            stem = seq_current
-        elif isinstance(state, dict):
-            selected = state.get("selected")
-            if selected:
-                stem = selected
-        if not stem and images:
-            stem = images[0].stem
-        if stem:
-            _add_aoi_entry(stem, "pack", [0.20, 0.00, 0.80, 0.70])
-            _add_aoi_entry(stem, "claim", [0.80, 0.00, 1.00, 1.00])
-            _add_aoi_entry(stem, "nutri", [0.00, 0.00, 0.20, 1.00])
-            if tiene_smartcore:
-                _add_aoi_entry(stem, "smartcore", [0.40, 0.80, 0.60, 0.95])
+    elif modo == "Grid":
+        grid_slots = [
+            {"pack": [0.00, 0.00, 0.50, 0.50], "smartcore": [0.20, 0.45, 0.30, 0.50]},
+            {"pack": [0.50, 0.00, 1.00, 0.50], "smartcore": [0.70, 0.45, 0.80, 0.50]},
+            {"pack": [0.00, 0.50, 0.50, 1.00], "smartcore": [0.20, 0.95, 0.30, 1.00]},
+            {"pack": [0.50, 0.50, 1.00, 1.00], "smartcore": [0.70, 0.95, 0.80, 1.00]},
+        ]
+        for idx, (nombre, recomendado) in enumerate(normalized[:4]):
+            slot = grid_slots[idx]
+            _add_coords(nombre, "pack", slot["pack"])
+            if tiene_smartcore and recomendado:
+                _add_coords(nombre, "smartcore", slot["smartcore"])
 
-    return aoi_dict
+    elif modo == "Sequential":
+        if normalized:
+            nombre, recomendado = normalized[0]
+            _add_coords(nombre, "pack", [0.20, 0.00, 0.80, 0.70])
+            _add_coords(nombre, "claim", [0.80, 0.00, 1.00, 1.00])
+            _add_coords(nombre, "nutri", [0.00, 0.00, 0.20, 1.00])
+            if tiene_smartcore and recomendado:
+                _add_coords(nombre, "smartcore", [0.40, 0.80, 0.60, 0.95])
+
+    return layout
 
 
 def calcular_atencion_recomendado(aois, gaze_data, recomendado):
@@ -1395,6 +1397,77 @@ def calcular_atencion_recomendado(aois, gaze_data, recomendado):
     }
 
 
+def _get_visible_products_by_screen(mode: str, state: dict) -> list[dict[str, list[str]]]:
+    images = state.get("images") or []
+
+    def _stem(entry: Any) -> str:
+        if isinstance(entry, Path):
+            return entry.stem
+        return str(entry)
+
+    image_names = [_stem(image) for image in images]
+    screens: list[dict[str, list[str]]] = []
+
+    if mode == "A/B":
+        pairs = state.get("ab_pairs", []) or []
+        for idx, pair in enumerate(pairs, start=1):
+            if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+                continue
+            names: list[str] = []
+            for product_index in pair:
+                if not isinstance(product_index, int):
+                    continue
+                if 0 <= product_index < len(images):
+                    names.append(_stem(images[product_index]))
+            if len(names) == 2:
+                screens.append({"label": f"A/B · Par {idx}", "productos": names})
+        finalists: list[str] = []
+        final_options = state.get("ab_final_options")
+        if isinstance(final_options, list) and len(final_options) == 2:
+            finalists = [str(option) for option in final_options]
+        else:
+            winner_indexes = state.get("ab_winner_indexes", []) or []
+            for winner_idx in winner_indexes:
+                if not isinstance(winner_idx, int):
+                    continue
+                if 0 <= winner_idx < len(images):
+                    finalists.append(_stem(images[winner_idx]))
+                if len(finalists) == 2:
+                    break
+        if len(finalists) == 2:
+            screens.append({"label": "A/B · Final", "productos": finalists})
+        return screens
+
+    if mode == "Grid":
+        products = image_names[:4]
+        if not products:
+            options = state.get("options", []) or []
+            products = [str(option) for option in options[:4]]
+        if products:
+            screens.append({"label": "Grid", "productos": products})
+        return screens
+
+    if mode == "Sequential":
+        products = image_names
+        if not products:
+            options = state.get("options", []) or []
+            products = [str(option) for option in options]
+        for idx, product in enumerate(products):
+            label = f"Sequential · Producto {idx + 1}"
+            if product:
+                label = f"Sequential · {product}"
+            screens.append({"label": label, "productos": [product]})
+        return screens
+
+    if image_names:
+        screens.append({"label": mode, "productos": image_names})
+    else:
+        options = state.get("options", []) or []
+        if options:
+            screens.append({"label": mode, "productos": [str(option) for option in options]})
+    return screens
+
+
 def obtener_layout_modo(modo, state):
     if modo == "A/B":
         return "AB-2col"
@@ -1427,6 +1500,9 @@ def _build_experiment_results(
         experiment_duration = (experiment_end - experiment_start).total_seconds()
     records: list[dict] = []
     participant_group = user_group or st.session_state.get("tab2_user_group", "")
+    smartscore_enabled = participant_group == "Con SmartScore"
+    default_atn = {"tiempo": None, "fijaciones": None, "primera_mirada": None}
+
     for mode in sequence:
         state = sessions.get(mode, {})
         start_time = state.get("start_time")
@@ -1437,7 +1513,7 @@ def _build_experiment_results(
         if start_time and completion_time:
             mode_duration = (completion_time - start_time).total_seconds()
         recomendado = state.get("producto_recomendado")
-        record = {
+        base_record = {
             "Usuario": user_name,
             "ID_Participante": user_id or st.session_state.get("tab2_user_id", ""),
             "Grupo_Experimental": participant_group,
@@ -1491,90 +1567,123 @@ def _build_experiment_results(
                 f"{finalists[0]} vs {finalists[1]}" if len(finalists) == 2 else None
             )
 
-            record["A/B · Par 1"] = par1
-            record["A/B · Par 1 · Elegida"] = (
+            base_record["A/B · Par 1"] = par1
+            base_record["A/B · Par 1 · Elegida"] = (
                 ab_choices[0] if len(ab_choices) > 0 else None
             )
 
-            record["A/B · Par 2"] = par2
-            record["A/B · Par 2 · Elegida"] = (
+            base_record["A/B · Par 2"] = par2
+            base_record["A/B · Par 2 · Elegida"] = (
                 ab_choices[1] if len(ab_choices) > 1 else None
             )
 
-            record["A/B · Final"] = final_pair
-            record["A/B · Final · Elegida"] = final_choice
+            base_record["A/B · Final"] = final_pair
+            base_record["A/B · Final · Elegida"] = final_choice
 
         else:
-            record["A/B · Par 1"] = None
-            record["A/B · Par 1 · Elegida"] = None
-            record["A/B · Par 2"] = None
-            record["A/B · Par 2 · Elegida"] = None
-            record["A/B · Final"] = None
-            record["A/B · Final · Elegida"] = None
-        inicio_s = record["Inicio del modo (s)"]
-        fin_s = record["Momento de finalización (s)"]
-        record["Frame_inicio"] = buscar_frame(inicio_s)
-        record["Frame_fin"] = buscar_frame(fin_s)
-        record["Pantalla_mostrada"] = obtener_layout_modo(mode, state)
-        aois = obtener_aoi_layout(state, mode)
+            base_record["A/B · Par 1"] = None
+            base_record["A/B · Par 1 · Elegida"] = None
+            base_record["A/B · Par 2"] = None
+            base_record["A/B · Par 2 · Elegida"] = None
+            base_record["A/B · Final"] = None
+            base_record["A/B · Final · Elegida"] = None
 
-        if participant_group == "Con SmartScore":
-            atn = calcular_atencion_recomendado(
-                aois, state.get("gaze_history", []), recomendado
-            )
-        else:
-            atn = {"tiempo": None, "fijaciones": None, "primera_mirada": None}
+        pantalla_layout = obtener_layout_modo(mode, state)
+        inicio_s = base_record["Inicio del modo (s)"]
+        fin_s = base_record["Momento de finalización (s)"]
+        screen_views = _get_visible_products_by_screen(mode, state)
+        if not screen_views:
+            screen_views = [
+                {"label": mode, "productos": state.get("options", []) or []}
+            ]
 
-        record["Atencion_Recomendado_Tiempo"] = atn["tiempo"]
-        record["Atencion_Recomendado_Fijaciones"] = atn["fijaciones"]
-        record["Atencion_Recomendado_PrimeraMirada"] = atn["primera_mirada"]
+        for screen in screen_views:
+            screen_products = [str(prod) for prod in screen.get("productos", [])]
+            record = base_record.copy()
+            record["Pantalla_mostrada"] = pantalla_layout
+            record["Pantalla"] = screen.get("label", "")
+            record["Productos visibles en pantalla"] = ", ".join(screen_products)
+            record["Frame_inicio"] = buscar_frame(inicio_s)
+            record["Frame_fin"] = buscar_frame(fin_s)
 
-        aois_dict = {}
-        for nombre, bounds in aois.items():
-            if isinstance(bounds, (list, tuple)) and len(bounds) >= 4:
-                try:
-                    aois_dict[nombre] = [float(value) for value in bounds[:4]]
-                except (TypeError, ValueError):
-                    continue
-            elif isinstance(bounds, dict):
-                try:
-                    aois_dict[nombre] = [
-                        float(bounds.get("x_min")),
-                        float(bounds.get("y_min")),
-                        float(bounds.get("x_max")),
-                        float(bounds.get("y_max")),
-                    ]
-                except (TypeError, ValueError):
-                    continue
-        record["AOIs"] = json.dumps(aois_dict, ensure_ascii=False)
-
-        if mode == "A/B":
-            stage_durations = state.get("ab_stage_durations", {})
-            record["Tiempo comparación A/B · Par 1 (s)"] = stage_durations.get("pair_1")
-            record["Tiempo comparación A/B · Par 2 (s)"] = stage_durations.get("pair_2")
-            record["Tiempo comparación A/B · Final (s)"] = stage_durations.get("final")
-
-        if mode == "Sequential":
-            durations_map = state.get("seq_product_durations", {})
-            visits_map = state.get("seq_product_visits", {})
-            history = state.get("seq_navigation_history", [])
-            record["Secuencial · Tiempo por producto (s)"] = _format_metric_dict(
-                durations_map
-            )
-            record["Secuencial · Visitas por producto"] = _format_metric_dict(
-                visits_map
-            )
-            record["Secuencial · Veces botón regresar"] = state.get(
-                "seq_back_clicks", 0
-            )
-            record["Secuencial · Veces botón siguiente"] = state.get(
-                "seq_next_clicks", 0
-            )
-            record["Secuencial · Historial navegación"] = (
-                json.dumps(history, ensure_ascii=False) if history else ""
+            productos_visibles = [
+                {
+                    "nombre": producto,
+                    "es_recomendado": bool(
+                        recomendado and producto == recomendado
+                    ),
+                }
+                for producto in screen_products
+            ]
+            aois = obtener_aoi_layout(
+                modo=mode,
+                productos_visibles=productos_visibles,
+                tiene_smartcore=smartscore_enabled,
             )
 
-        records.append(record)
+            if smartscore_enabled:
+                atn = calcular_atencion_recomendado(
+                    aois, state.get("gaze_history", []), recomendado
+                )
+            else:
+                atn = default_atn
+
+            record["Atencion_Recomendado_Tiempo"] = atn["tiempo"]
+            record["Atencion_Recomendado_Fijaciones"] = atn["fijaciones"]
+            record["Atencion_Recomendado_PrimeraMirada"] = atn["primera_mirada"]
+
+            aois_dict = {}
+            for nombre, bounds in aois.items():
+                if isinstance(bounds, (list, tuple)) and len(bounds) >= 4:
+                    try:
+                        aois_dict[nombre] = [float(value) for value in bounds[:4]]
+                    except (TypeError, ValueError):
+                        continue
+                elif isinstance(bounds, dict):
+                    try:
+                        aois_dict[nombre] = [
+                            float(bounds.get("x_min")),
+                            float(bounds.get("y_min")),
+                            float(bounds.get("x_max")),
+                            float(bounds.get("y_max")),
+                        ]
+                    except (TypeError, ValueError):
+                        continue
+            record["AOIs"] = json.dumps(aois_dict, ensure_ascii=False)
+
+            if mode == "A/B":
+                stage_durations = state.get("ab_stage_durations", {})
+                record["Tiempo comparación A/B · Par 1 (s)"] = stage_durations.get(
+                    "pair_1"
+                )
+                record["Tiempo comparación A/B · Par 2 (s)"] = stage_durations.get(
+                    "pair_2"
+                )
+                record["Tiempo comparación A/B · Final (s)"] = stage_durations.get(
+                    "final"
+                )
+
+            if mode == "Sequential":
+                durations_map = state.get("seq_product_durations", {})
+                visits_map = state.get("seq_product_visits", {})
+                history = state.get("seq_navigation_history", [])
+                record["Secuencial · Tiempo por producto (s)"] = _format_metric_dict(
+                    durations_map
+                )
+                record["Secuencial · Visitas por producto"] = _format_metric_dict(
+                    visits_map
+                )
+                record["Secuencial · Veces botón regresar"] = state.get(
+                    "seq_back_clicks", 0
+                )
+                record["Secuencial · Veces botón siguiente"] = state.get(
+                    "seq_next_clicks", 0
+                )
+                record["Secuencial · Historial navegación"] = (
+                    json.dumps(history, ensure_ascii=False) if history else ""
+                )
+
+            records.append(record)
 
     summary_df = pd.DataFrame(records)
 
@@ -2597,12 +2706,21 @@ with tab2:
                     highlighted_product = current_state.get(
                         "ab_highlighted_product"
                     )
+                    state_modified = False
                     if highlighted_product is None:
                         best_entry = _select_highest_smartscore_product(
                             images, smartscore_map
                         )
                         highlighted_product = best_entry[0] if best_entry else None
                         current_state["ab_highlighted_product"] = highlighted_product
+                        state_modified = True
+                    if (
+                        current_state.get("producto_recomendado")
+                        != highlighted_product
+                    ):
+                        current_state["producto_recomendado"] = highlighted_product
+                        state_modified = True
+                    if state_modified:
                         mode_sessions[current_mode] = current_state
                         st.session_state["mode_sessions"] = mode_sessions
                     if len(display_indexes) != 2:
@@ -2640,6 +2758,13 @@ with tab2:
                         images, smartscore_map
                     )
                     highlighted_product = grid_best[0] if grid_best else None
+                    if (
+                        current_state.get("producto_recomendado")
+                        != highlighted_product
+                    ):
+                        current_state["producto_recomendado"] = highlighted_product
+                        mode_sessions[current_mode] = current_state
+                        st.session_state["mode_sessions"] = mode_sessions
                     for start in range(0, len(images), 2):
                         columns = st.columns(2)
                         for offset, (col, image_path) in enumerate(
@@ -2672,6 +2797,11 @@ with tab2:
                 current_image = images[index]
                 seq_best = _select_highest_smartscore_product(images, smartscore_map)
                 highlighted_product = seq_best[0] if seq_best else None
+                if (
+                    current_state.get("producto_recomendado")
+                    != highlighted_product
+                ):
+                    current_state["producto_recomendado"] = highlighted_product
                 current_state = _ensure_seq_view_state(current_state, current_image)
                 mode_sessions[current_mode] = current_state
                 st.session_state["mode_sessions"] = mode_sessions
