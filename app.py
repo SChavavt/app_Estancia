@@ -1696,6 +1696,7 @@ def _build_experiment_results(
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     sequence: list = st.session_state.get("mode_sequence", [])
     sessions: dict = st.session_state.get("mode_sessions", {})
+    smartscore_map = _load_user_smartscore_map(user_name)
     experiment_start = st.session_state.get("experiment_start_time")
     experiment_end = st.session_state.get("experiment_end_time")
     experiment_start_iso = (
@@ -1878,6 +1879,40 @@ def _build_experiment_results(
                 record["Tiempo comparación A/B · Final (s)"] = stage_durations.get(
                     "final"
                 )
+
+            # ==============================
+            # SMARTSCORE – AGREGAR AL EXCEL
+            # ==============================
+            smartscore_nombre_sel = None
+            smartscore_valor_sel = None
+            smartscore_nombre_rec = None
+            smartscore_valor_rec = None
+
+            if smartscore_map:
+
+                # Producto seleccionado
+                seleccionado_stem = state.get("selected")
+                if isinstance(seleccionado_stem, str) and seleccionado_stem.strip():
+                    entry_sel = _find_smartscore_for_image(
+                        seleccionado_stem, smartscore_map
+                    )
+                    if entry_sel:
+                        smartscore_nombre_sel, smartscore_valor_sel = entry_sel
+
+                # Producto recomendado
+                recomendado_stem = state.get("producto_recomendado")
+                if isinstance(recomendado_stem, str) and recomendado_stem.strip():
+                    entry_rec = _find_smartscore_for_image(
+                        recomendado_stem, smartscore_map
+                    )
+                    if entry_rec:
+                        smartscore_nombre_rec, smartscore_valor_rec = entry_rec
+
+            record["SmartScore · Producto Seleccionado"] = smartscore_nombre_sel
+            record["SmartScore · Puntaje Seleccionado"] = smartscore_valor_sel
+            record["SmartScore · Producto Recomendado"] = smartscore_nombre_rec
+            record["SmartScore · Puntaje Recomendado"] = smartscore_valor_rec
+            # ==============================
 
             if mode == "Sequential":
                 durations_map = state.get("seq_product_durations", {})
@@ -2991,6 +3026,7 @@ with tab2:
                         )
                         highlighted_product = best_entry[0] if best_entry else None
                         current_state["ab_highlighted_product"] = highlighted_product
+                        current_state["producto_recomendado"] = highlighted_product
                         state_modified = True
                     if (
                         current_state.get("producto_recomendado")
@@ -3036,6 +3072,9 @@ with tab2:
                         images, smartscore_map
                     )
                     highlighted_product = grid_best[0] if grid_best else None
+                    current_state["producto_recomendado"] = highlighted_product
+                    mode_sessions[current_mode] = current_state
+                    st.session_state["mode_sessions"] = mode_sessions
                     if (
                         current_state.get("producto_recomendado")
                         != highlighted_product
@@ -3075,6 +3114,7 @@ with tab2:
                 current_image = images[index]
                 seq_best = _select_highest_smartscore_product(images, smartscore_map)
                 highlighted_product = seq_best[0] if seq_best else None
+                current_state["producto_recomendado"] = highlighted_product
                 if (
                     current_state.get("producto_recomendado")
                     != highlighted_product
