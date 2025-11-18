@@ -1225,11 +1225,14 @@ def _advance_visual_mode() -> None:
     _trigger_streamlit_rerun()
 
 
-def obtener_aoi_layout(
-    modo: str, productos_visibles: list[str], tiene_smartcore: bool
-) -> dict:
-    """Genera los AOIs exactos para la pantalla mostrada."""
+def obtener_aoi_layout(state, modo):
+    """
+    Devuelve un dict con bounding boxes por AOI.
+    Cada bounding box es [x1, y1, x2, y2] en coordenadas normalizadas 0-1.
+    """
 
+    grupo = st.session_state.get("tab2_user_group", "")
+    tiene_smartcore = grupo == "Con SmartScore"
     aoi_dict: dict[str, list[float]] = {}
 
     def _add_aoi_entry(stem: Optional[str], suffix: str, coords: list[float]) -> None:
@@ -1239,56 +1242,75 @@ def obtener_aoi_layout(
             x1, y1, x2, y2 = [float(value) for value in coords]
         except (TypeError, ValueError):
             return
-        aoi_dict[f"{stem}_{suffix}"] = [x1, y1, x2, y2]
+        key = f"{stem}_{suffix}"
+        aoi_dict[key] = [x1, y1, x2, y2]
 
-    visibles = [stem for stem in productos_visibles if isinstance(stem, str) and stem]
+    images: list[Path] = state.get("images", []) if isinstance(state, dict) else []
 
-    if modo == "A/B":
-        left_coords = {
-            "pack": [0.00, 0.00, 0.50, 0.60],
-            "claim": [0.00, 0.60, 0.50, 1.00],
-            "smartcore": [0.20, 0.90, 0.30, 1.00],
-        }
-        right_coords = {
-            "pack": [0.50, 0.00, 1.00, 0.60],
-            "claim": [0.50, 0.60, 1.00, 1.00],
-            "smartcore": [0.70, 0.90, 0.80, 1.00],
-        }
-        if visibles:
-            stem = visibles[0]
-            _add_aoi_entry(stem, "pack", left_coords["pack"])
-            _add_aoi_entry(stem, "claim", left_coords["claim"])
-            if tiene_smartcore:
-                _add_aoi_entry(stem, "smartcore", left_coords["smartcore"])
-        if len(visibles) > 1:
-            stem = visibles[1]
-            _add_aoi_entry(stem, "pack", right_coords["pack"])
-            _add_aoi_entry(stem, "claim", right_coords["claim"])
-            if tiene_smartcore:
-                _add_aoi_entry(stem, "smartcore", right_coords["smartcore"])
-        return aoi_dict
+    if modo == "A/B" and images:
+        display_indexes = []
+        if isinstance(state, dict):
+            display_indexes = _get_ab_display_indexes(state)
+        if len(display_indexes) != 2:
+            display_indexes = list(range(min(2, len(images))))
+        if len(display_indexes) == 2:
+            left_idx, right_idx = display_indexes
+            left_coords = {
+                "pack": [0.00, 0.00, 0.50, 0.60],
+                "claim": [0.00, 0.60, 0.50, 1.00],
+                "smartcore": [0.20, 0.90, 0.30, 1.00],
+            }
+            right_coords = {
+                "pack": [0.50, 0.00, 1.00, 0.60],
+                "claim": [0.50, 0.60, 1.00, 1.00],
+                "smartcore": [0.70, 0.90, 0.80, 1.00],
+            }
 
-    if modo == "Grid":
+            if 0 <= left_idx < len(images):
+                stem = images[left_idx].stem
+                _add_aoi_entry(stem, "pack", left_coords["pack"])
+                _add_aoi_entry(stem, "claim", left_coords["claim"])
+                if tiene_smartcore:
+                    _add_aoi_entry(stem, "smartcore", left_coords["smartcore"])
+            if 0 <= right_idx < len(images):
+                stem = images[right_idx].stem
+                _add_aoi_entry(stem, "pack", right_coords["pack"])
+                _add_aoi_entry(stem, "claim", right_coords["claim"])
+                if tiene_smartcore:
+                    _add_aoi_entry(stem, "smartcore", right_coords["smartcore"])
+
+    if modo == "Grid" and images:
         grid_positions = [
-            ([0.00, 0.00, 0.50, 0.50], [0.20, 0.45, 0.30, 0.50]),
-            ([0.50, 0.00, 1.00, 0.50], [0.70, 0.45, 0.80, 0.50]),
-            ([0.00, 0.50, 0.50, 1.00], [0.20, 0.95, 0.30, 1.00]),
-            ([0.50, 0.50, 1.00, 1.00], [0.70, 0.95, 0.80, 1.00]),
+            (0, [0.00, 0.00, 0.50, 0.50], [0.20, 0.45, 0.30, 0.50]),
+            (1, [0.50, 0.00, 1.00, 0.50], [0.70, 0.45, 0.80, 0.50]),
+            (2, [0.00, 0.50, 0.50, 1.00], [0.20, 0.95, 0.30, 1.00]),
+            (3, [0.50, 0.50, 1.00, 1.00], [0.70, 0.95, 0.80, 1.00]),
         ]
-        for stem, (pack_coords, smartcore_coords) in zip(visibles, grid_positions):
+        for idx, pack_coords, smart_coords in grid_positions:
+            if idx >= len(images):
+                continue
+            stem = images[idx].stem
             _add_aoi_entry(stem, "pack", pack_coords)
             if tiene_smartcore:
-                _add_aoi_entry(stem, "smartcore", smartcore_coords)
-        return aoi_dict
+                _add_aoi_entry(stem, "smartcore", smart_coords)
 
-    if modo == "Sequential" and visibles:
-        stem = visibles[0]
-        _add_aoi_entry(stem, "pack", [0.20, 0.00, 0.80, 0.70])
-        _add_aoi_entry(stem, "claim", [0.80, 0.00, 1.00, 1.00])
-        _add_aoi_entry(stem, "nutri", [0.00, 0.00, 0.20, 1.00])
-        if tiene_smartcore:
-            _add_aoi_entry(stem, "smartcore", [0.40, 0.80, 0.60, 0.95])
-        return aoi_dict
+    if modo == "Sequential":
+        stem: Optional[str] = None
+        seq_current = state.get("seq_current_image") if isinstance(state, dict) else None
+        if seq_current:
+            stem = seq_current
+        elif isinstance(state, dict):
+            selected = state.get("selected")
+            if selected:
+                stem = selected
+        if not stem and images:
+            stem = images[0].stem
+        if stem:
+            _add_aoi_entry(stem, "pack", [0.20, 0.00, 0.80, 0.70])
+            _add_aoi_entry(stem, "claim", [0.80, 0.00, 1.00, 1.00])
+            _add_aoi_entry(stem, "nutri", [0.00, 0.00, 0.20, 1.00])
+            if tiene_smartcore:
+                _add_aoi_entry(stem, "smartcore", [0.40, 0.80, 0.60, 0.95])
 
     return aoi_dict
 
@@ -1494,40 +1516,7 @@ def _build_experiment_results(
         record["Frame_inicio"] = buscar_frame(inicio_s)
         record["Frame_fin"] = buscar_frame(fin_s)
         record["Pantalla_mostrada"] = obtener_layout_modo(mode, state)
-
-        productos_visibles: list[str] = []
-        images: list[Path] = state.get("images", []) if isinstance(state, dict) else []
-        if mode == "A/B":
-            display_indexes = (
-                _get_ab_display_indexes(state) if isinstance(state, dict) else []
-            )
-            for idx in display_indexes[:2]:
-                if 0 <= idx < len(images):
-                    productos_visibles.append(images[idx].stem)
-        elif mode == "Grid":
-            for image in images[:4]:
-                productos_visibles.append(image.stem)
-        elif mode == "Sequential":
-            seq_current = state.get("seq_current_image") if isinstance(state, dict) else None
-            if seq_current:
-                productos_visibles = [seq_current]
-            else:
-                navigation_index = state.get("navigation_index") if isinstance(state, dict) else None
-                if (
-                    isinstance(navigation_index, int)
-                    and 0 <= navigation_index < len(images)
-                ):
-                    productos_visibles = [images[navigation_index].stem]
-                elif state.get("selected"):
-                    productos_visibles = [state.get("selected")]
-                elif images:
-                    productos_visibles = [images[0].stem]
-
-        aois = obtener_aoi_layout(
-            modo=mode,
-            productos_visibles=productos_visibles,
-            tiene_smartcore=(participant_group == "Con SmartScore"),
-        )
+        aois = obtener_aoi_layout(state, mode)
 
         if participant_group == "Con SmartScore":
             atn = calcular_atencion_recomendado(
