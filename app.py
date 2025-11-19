@@ -1287,22 +1287,24 @@ def _advance_visual_mode() -> None:
 
 def obtener_aoi_layout(
     modo: str,
-    productos_visibles: list[str],
-    tiene_smartcore: bool,
+    productos_visibles: list[Any],
+    producto_recomendado: Optional[str] = None,
     pantalla_id: Optional[str] = None,
 ) -> dict:
-    """Genera AOIs solo para los productos visibles en la pantalla actual."""
+    """Genera AOIs planos para los productos visibles en la pantalla actual."""
 
-    block_name = pantalla_id or modo
-    layout: dict[str, dict[str, list[float]]] = {block_name: {}}
-    block_entries = layout[block_name]
+    grupo = st.session_state.get("tab2_user_group", "")
+    mostrar_smartcore = grupo == "Con SmartScore"
+
+    layout: dict[str, list[float]] = {}
 
     def _normalize_entry(entry: Any) -> tuple[str, bool]:
         nombre = ""
         recomendado = False
         if isinstance(entry, dict):
             candidate = (
-                entry.get("nombre")
+                entry.get("display_name")
+                or entry.get("nombre")
                 or entry.get("name")
                 or entry.get("product")
                 or entry.get("id")
@@ -1321,13 +1323,16 @@ def obtener_aoi_layout(
                 recomendado = bool(entry[1])
         else:
             nombre = str(entry).strip()
+
+        if producto_recomendado and nombre:
+            recomendado = nombre == producto_recomendado
         return nombre, recomendado
 
     def _add_coords(nombre: str, suffix: str, coords: list[float]) -> None:
         if not nombre or not coords or len(coords) != 4:
             return
         try:
-            block_entries[f"{nombre}_{suffix}"] = [float(value) for value in coords]
+            layout[f"{nombre}_{suffix}"] = [float(value) for value in coords]
         except (TypeError, ValueError):
             return
 
@@ -1354,20 +1359,37 @@ def obtener_aoi_layout(
             slot = slot_coords[idx]
             _add_coords(nombre, "pack", slot["pack"])
             _add_coords(nombre, "claim", slot["claim"])
-            if tiene_smartcore and recomendado:
+            if mostrar_smartcore and recomendado:
                 _add_coords(nombre, "smartcore", slot["smartcore"])
 
     elif modo == "Grid":
         grid_slots = [
-            {"pack": [0.00, 0.00, 0.50, 0.50], "smartcore": [0.20, 0.45, 0.30, 0.50]},
-            {"pack": [0.50, 0.00, 1.00, 0.50], "smartcore": [0.70, 0.45, 0.80, 0.50]},
-            {"pack": [0.00, 0.50, 0.50, 1.00], "smartcore": [0.20, 0.95, 0.30, 1.00]},
-            {"pack": [0.50, 0.50, 1.00, 1.00], "smartcore": [0.70, 0.95, 0.80, 1.00]},
+            {
+                "pack": [0.00, 0.00, 0.50, 0.40],
+                "claim": [0.00, 0.40, 0.50, 0.80],
+                "smartcore": [0.20, 0.75, 0.30, 0.85],
+            },
+            {
+                "pack": [0.50, 0.00, 1.00, 0.40],
+                "claim": [0.50, 0.40, 1.00, 0.80],
+                "smartcore": [0.70, 0.75, 0.80, 0.85],
+            },
+            {
+                "pack": [0.00, 0.50, 0.50, 0.90],
+                "claim": [0.00, 0.90, 0.50, 1.00],
+                "smartcore": [0.20, 0.95, 0.30, 1.00],
+            },
+            {
+                "pack": [0.50, 0.50, 1.00, 0.90],
+                "claim": [0.50, 0.90, 1.00, 1.00],
+                "smartcore": [0.70, 0.95, 0.80, 1.00],
+            },
         ]
         for idx, (nombre, recomendado) in enumerate(normalized[:4]):
             slot = grid_slots[idx]
             _add_coords(nombre, "pack", slot["pack"])
-            if tiene_smartcore and recomendado:
+            _add_coords(nombre, "claim", slot["claim"])
+            if mostrar_smartcore and recomendado:
                 _add_coords(nombre, "smartcore", slot["smartcore"])
 
     elif modo == "Sequential":
@@ -1376,7 +1398,7 @@ def obtener_aoi_layout(
             _add_coords(nombre, "pack", [0.20, 0.00, 0.80, 0.70])
             _add_coords(nombre, "claim", [0.80, 0.00, 1.00, 1.00])
             _add_coords(nombre, "nutri", [0.00, 0.00, 0.20, 1.00])
-            if tiene_smartcore and recomendado:
+            if mostrar_smartcore and recomendado:
                 _add_coords(nombre, "smartcore", [0.40, 0.80, 0.60, 0.95])
 
     return layout
@@ -1745,6 +1767,21 @@ def _build_experiment_results(
     smartscore_enabled = participant_group == "Con SmartScore"
     default_atn = {"tiempo": None, "fijaciones": None, "primera_mirada": None}
 
+    product_name_cache: dict[str, str] = {}
+
+    def _resolve_display_name(product: str) -> str:
+        if not product:
+            return ""
+        cached = product_name_cache.get(product)
+        if cached is not None:
+            return cached
+        display = product
+        entry = _find_smartscore_for_image(product, smartscore_map)
+        if entry:
+            display = entry[0]
+        product_name_cache[product] = display
+        return display
+
     for mode in sequence:
         state = sessions.get(mode, {})
         start_time = state.get("start_time")
@@ -1852,119 +1889,144 @@ def _build_experiment_results(
                 return float(value)
             return fallback
 
+        pantalla_labels: list[str] = []
+        pantalla_ids: list[str] = []
+        productos_ordenados: list[str] = []
+        productos_vistos_set: set[str] = set()
+        frame_inicio_frames: list[int] = []
+        frame_fin_frames: list[int] = []
+        aois_totales: dict[str, list[float]] = {}
+
+        smartscore_nombre_sel = None
+        smartscore_valor_sel = None
+        smartscore_nombre_rec = None
+        smartscore_valor_rec = None
+
+        if smartscore_map:
+            seleccionado_stem = state.get("selected")
+            if isinstance(seleccionado_stem, str) and seleccionado_stem.strip():
+                entry_sel = _find_smartscore_for_image(
+                    seleccionado_stem, smartscore_map
+                )
+                if entry_sel:
+                    smartscore_nombre_sel, smartscore_valor_sel = entry_sel
+
+            recomendado_stem = state.get("producto_recomendado")
+            if isinstance(recomendado_stem, str) and recomendado_stem.strip():
+                entry_rec = _find_smartscore_for_image(
+                    recomendado_stem, smartscore_map
+                )
+                if entry_rec:
+                    smartscore_nombre_rec, smartscore_valor_rec = entry_rec
+
+        recommended_name = None
+        if smartscore_nombre_rec:
+            recommended_name = smartscore_nombre_rec
+        elif isinstance(recomendado, str) and recomendado.strip():
+            recommended_name = _resolve_display_name(recomendado)
+
         for idx, screen in enumerate(screen_views, start=1):
-            screen_products = [str(prod) for prod in screen.get("productos", [])]
+            pantalla_labels.append(screen.get("label", ""))
             pantalla_id = str(screen.get("pantalla_id") or f"{mode}-{idx}")
-            record = base_record.copy()
-            record["Pantalla_mostrada"] = pantalla_layout
-            record["Pantalla"] = screen.get("label", "")
-            record["Pantalla_ID"] = pantalla_id
-            record["Productos visibles en pantalla"] = ", ".join(screen_products)
+            pantalla_ids.append(pantalla_id)
+            screen_products = [str(prod) for prod in screen.get("productos", [])]
+            display_products = [_resolve_display_name(prod) for prod in screen_products]
+            for name in display_products:
+                if name and name not in productos_vistos_set:
+                    productos_vistos_set.add(name)
+                    productos_ordenados.append(name)
+
+            productos_visibles = [
+                {
+                    "display_name": display,
+                }
+                for display in display_products
+            ]
+
+            aois = obtener_aoi_layout(
+                modo=mode,
+                productos_visibles=productos_visibles,
+                producto_recomendado=recommended_name,
+                pantalla_id=pantalla_id,
+            )
+            aois_totales.update(aois)
+
             frame_start_seconds = _seconds_from_value(screen.get("start_time"), inicio_s)
             frame_end_seconds = _seconds_from_value(screen.get("end_time"), fin_s)
             if frame_start_seconds is None and frame_end_seconds is not None:
                 frame_start_seconds = frame_end_seconds
             if frame_end_seconds is None and frame_start_seconds is not None:
                 frame_end_seconds = frame_start_seconds
-            record["Frame_inicio"] = buscar_frame(frame_start_seconds)
-            record["Frame_fin"] = buscar_frame(frame_end_seconds)
+            frame_inicio = buscar_frame(frame_start_seconds)
+            frame_fin = buscar_frame(frame_end_seconds)
+            if frame_inicio is not None:
+                frame_inicio_frames.append(frame_inicio)
+            if frame_fin is not None:
+                frame_fin_frames.append(frame_fin)
 
-            productos_visibles = [
-                {
-                    "nombre": producto,
-                    "es_recomendado": bool(
-                        recomendado and producto == recomendado
-                    ),
-                }
-                for producto in screen_products
-            ]
-            aois = obtener_aoi_layout(
-                modo=mode,
-                productos_visibles=productos_visibles,
-                tiene_smartcore=smartscore_enabled,
-                pantalla_id=pantalla_id,
+        record = base_record.copy()
+        record["Pantalla_mostrada"] = pantalla_layout
+        record["Pantalla"] = " | ".join(filter(None, pantalla_labels)) or pantalla_layout
+        record["Pantalla_ID"] = " | ".join(filter(None, pantalla_ids))
+        record["Productos visibles en pantalla"] = ", ".join(productos_ordenados)
+        record["Frame_inicio"] = min(frame_inicio_frames) if frame_inicio_frames else None
+        record["Frame_fin"] = max(frame_fin_frames) if frame_fin_frames else None
+
+        if smartscore_enabled and recommended_name:
+            atn = calcular_atencion_recomendado(
+                aois_totales, state.get("gaze_history", []), recommended_name
+            )
+        else:
+            atn = default_atn
+
+        record["Atencion_Recomendado_Tiempo"] = atn["tiempo"]
+        record["Atencion_Recomendado_Fijaciones"] = atn["fijaciones"]
+        record["Atencion_Recomendado_PrimeraMirada"] = atn["primera_mirada"]
+
+        record["AOIs"] = json.dumps(aois_totales, ensure_ascii=False)
+
+        if mode == "A/B":
+            stage_durations = state.get("ab_stage_durations", {})
+            record["Tiempo comparación A/B · Par 1 (s)"] = stage_durations.get(
+                "pair_1"
+            )
+            record["Tiempo comparación A/B · Par 2 (s)"] = stage_durations.get(
+                "pair_2"
+            )
+            record["Tiempo comparación A/B · Final (s)"] = stage_durations.get(
+                "final"
             )
 
-            if smartscore_enabled:
-                atn = calcular_atencion_recomendado(
-                    aois, state.get("gaze_history", []), recomendado
-                )
-            else:
-                atn = default_atn
+        # ==============================
+        # SMARTSCORE – AGREGAR AL EXCEL
+        # ==============================
+        record["SmartScore · Producto Seleccionado"] = smartscore_nombre_sel
+        record["SmartScore · Puntaje Seleccionado"] = smartscore_valor_sel
+        record["SmartScore · Producto Recomendado"] = smartscore_nombre_rec
+        record["SmartScore · Puntaje Recomendado"] = smartscore_valor_rec
+        # ==============================
 
-            record["Atencion_Recomendado_Tiempo"] = atn["tiempo"]
-            record["Atencion_Recomendado_Fijaciones"] = atn["fijaciones"]
-            record["Atencion_Recomendado_PrimeraMirada"] = atn["primera_mirada"]
+        if mode == "Sequential":
+            durations_map = state.get("seq_product_durations", {})
+            visits_map = state.get("seq_product_visits", {})
+            history = state.get("seq_navigation_history", [])
+            record["Secuencial · Tiempo por producto (s)"] = _format_metric_dict(
+                durations_map
+            )
+            record["Secuencial · Visitas por producto"] = _format_metric_dict(
+                visits_map
+            )
+            record["Secuencial · Veces botón regresar"] = state.get(
+                "seq_back_clicks", 0
+            )
+            record["Secuencial · Veces botón siguiente"] = state.get(
+                "seq_next_clicks", 0
+            )
+            record["Secuencial · Historial navegación"] = (
+                json.dumps(history, ensure_ascii=False) if history else ""
+            )
 
-            record["AOIs"] = json.dumps(aois, ensure_ascii=False)
-
-            if mode == "A/B":
-                stage_durations = state.get("ab_stage_durations", {})
-                record["Tiempo comparación A/B · Par 1 (s)"] = stage_durations.get(
-                    "pair_1"
-                )
-                record["Tiempo comparación A/B · Par 2 (s)"] = stage_durations.get(
-                    "pair_2"
-                )
-                record["Tiempo comparación A/B · Final (s)"] = stage_durations.get(
-                    "final"
-                )
-
-            # ==============================
-            # SMARTSCORE – AGREGAR AL EXCEL
-            # ==============================
-            smartscore_nombre_sel = None
-            smartscore_valor_sel = None
-            smartscore_nombre_rec = None
-            smartscore_valor_rec = None
-
-            if smartscore_map:
-
-                # Producto seleccionado
-                seleccionado_stem = state.get("selected")
-                if isinstance(seleccionado_stem, str) and seleccionado_stem.strip():
-                    entry_sel = _find_smartscore_for_image(
-                        seleccionado_stem, smartscore_map
-                    )
-                    if entry_sel:
-                        smartscore_nombre_sel, smartscore_valor_sel = entry_sel
-
-                # Producto recomendado
-                recomendado_stem = state.get("producto_recomendado")
-                if isinstance(recomendado_stem, str) and recomendado_stem.strip():
-                    entry_rec = _find_smartscore_for_image(
-                        recomendado_stem, smartscore_map
-                    )
-                    if entry_rec:
-                        smartscore_nombre_rec, smartscore_valor_rec = entry_rec
-
-            record["SmartScore · Producto Seleccionado"] = smartscore_nombre_sel
-            record["SmartScore · Puntaje Seleccionado"] = smartscore_valor_sel
-            record["SmartScore · Producto Recomendado"] = smartscore_nombre_rec
-            record["SmartScore · Puntaje Recomendado"] = smartscore_valor_rec
-            # ==============================
-
-            if mode == "Sequential":
-                durations_map = state.get("seq_product_durations", {})
-                visits_map = state.get("seq_product_visits", {})
-                history = state.get("seq_navigation_history", [])
-                record["Secuencial · Tiempo por producto (s)"] = _format_metric_dict(
-                    durations_map
-                )
-                record["Secuencial · Visitas por producto"] = _format_metric_dict(
-                    visits_map
-                )
-                record["Secuencial · Veces botón regresar"] = state.get(
-                    "seq_back_clicks", 0
-                )
-                record["Secuencial · Veces botón siguiente"] = state.get(
-                    "seq_next_clicks", 0
-                )
-                record["Secuencial · Historial navegación"] = (
-                    json.dumps(history, ensure_ascii=False) if history else ""
-                )
-
-            records.append(record)
+        records.append(record)
 
     summary_df = pd.DataFrame(records)
 
