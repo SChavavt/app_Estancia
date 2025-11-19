@@ -105,7 +105,10 @@ LANGUAGE_CONTENT = {
         "tab2_next_mode": "Next mode ▶️",
         "tab2_finish_experiment": "Finish experiment",
         "tab2_grid_instruction": "Compare every product at once and click ‘Choose this product’ under your favorite.",
-        "tab2_seq_instruction": "Use Previous/Next to revisit any product and press ‘Choose this product’ when ready.",
+        "tab2_seq_instruction": (
+            "You'll review 4 products in total. Use Previous/Next to move forward or back as often as you want, choose "
+            "your single favorite with ‘Choose this product’, and confirm your selection to continue."
+        ),
         "tab2_ab_step_one": "Step 1 of 3: Choose your favorite from the first pair.",
         "tab2_ab_step_two": "Step 2 of 3: Choose your favorite from the second pair.",
         "tab2_ab_step_three": "Final step: Choose your favorite between the two finalists.",
@@ -190,7 +193,10 @@ LANGUAGE_CONTENT = {
         "tab2_next_mode": "Siguiente modo ▶️",
         "tab2_finish_experiment": "Finalizar experimento",
         "tab2_grid_instruction": "Compara todos los productos a la vez y haz clic en ‘Elegir este producto’ debajo de tu favorito.",
-        "tab2_seq_instruction": "Usa Anterior/Siguiente para volver a cualquier producto e indica tu elección con ‘Elegir este producto’.",
+        "tab2_seq_instruction": (
+            "Verás 4 productos en total. Usa Anterior/Siguiente para avanzar o retroceder cuantas veces necesites, elige "
+            "solo tu favorito con ‘Elegir este producto’ y confirma tu selección para continuar."
+        ),
         "tab2_ab_step_one": "Paso 1 de 3: Elige tu favorito del primer par.",
         "tab2_ab_step_two": "Paso 2 de 3: Elige tu favorito del segundo par.",
         "tab2_ab_step_three": "Paso final: Elige tu favorito entre los dos finalistas.",
