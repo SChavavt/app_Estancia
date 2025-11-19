@@ -294,6 +294,7 @@ st.session_state.setdefault("tab2_user_id", "")
 st.session_state.setdefault("tab2_user_group", "")
 st.session_state.setdefault("tab2_smartscore_map", {})
 st.session_state.setdefault("tab2_smartscore_owner", "")
+st.session_state.setdefault("smart_scores", {})
 st.session_state.setdefault("tab2_name_query", "")
 VISUAL_MODE_OPTIONS = ["A/B", "Grid", "Sequential"]
 VISUAL_SUBFOLDERS = {"A/B": "A_B", "Grid": "Grid", "Sequential": "Sequential"}
@@ -633,6 +634,7 @@ def _set_tab2_smartscore_map(user_name: str) -> None:
     if not cleaned:
         st.session_state["tab2_smartscore_map"] = {}
         st.session_state["tab2_smartscore_owner"] = ""
+        st.session_state["smart_scores"] = {}
         sessions = st.session_state.get("mode_sessions", {})
         for mode_state in sessions.values():
             if isinstance(mode_state, dict) and "ab_highlighted_product" in mode_state:
@@ -642,6 +644,7 @@ def _set_tab2_smartscore_map(user_name: str) -> None:
 
     st.session_state["tab2_smartscore_map"] = _load_user_smartscore_map(cleaned)
     st.session_state["tab2_smartscore_owner"] = cleaned
+    st.session_state["smart_scores"] = st.session_state["tab2_smartscore_map"]
     sessions = st.session_state.get("mode_sessions", {})
     for mode_state in sessions.values():
         if isinstance(mode_state, dict) and "ab_highlighted_product" in mode_state:
@@ -1550,15 +1553,28 @@ def _get_visible_products_by_screen(mode: str, state: dict) -> list[dict[str, li
         return screens
 
     if mode == "Sequential":
-        products = image_names
-        if not products:
+        view_order = state.get("seq_first_view_order", []) or []
+        if not view_order:
+            view_order = image_names
+        if not view_order:
             options = state.get("options", []) or []
-            products = [str(option) for option in options]
-        for idx, product in enumerate(products):
-            label = f"Sequential · Producto {idx + 1}"
-            if product:
-                label = f"Sequential · {product}"
-            screens.append({"label": label, "productos": [product]})
+            view_order = [str(option) for option in options]
+        selected_product = state.get("selected")
+        if not selected_product and view_order:
+            selected_product = view_order[0]
+        frames_map: dict = state.get("seq_product_frames", {}) or {}
+        frame_entry = frames_map.get(selected_product, {}) if selected_product else {}
+        start_time = frame_entry.get("start") if isinstance(frame_entry.get("start"), datetime) else default_start
+        end_time = frame_entry.get("end") if isinstance(frame_entry.get("end"), datetime) else default_end or start_time
+        screens.append(
+            {
+                "label": "Sequential",
+                "pantalla_id": "Seq-1",
+                "productos": [selected_product] if selected_product else [],
+                "start_time": start_time,
+                "end_time": end_time,
+            }
+        )
         return screens
 
     if image_names:
@@ -1690,30 +1706,25 @@ def _build_screen_timeline(mode: str, state: dict) -> list[dict[str, Any]]:
         if not view_order:
             images: list[Path] = state.get("images", [])
             view_order = [img.stem for img in images]
+        if not view_order:
+            options = state.get("options", []) or []
+            view_order = [str(option) for option in options]
+        selected_product = state.get("selected")
+        if not selected_product and view_order:
+            selected_product = view_order[0]
         frames_map: dict = state.get("seq_product_frames", {}) or {}
-        for idx, product in enumerate(view_order, start=1):
-            if not product:
-                continue
-            frame_entry = frames_map.get(product, {}) or {}
-            start_time = frame_entry.get("start")
-            end_time = frame_entry.get("end")
-            if not isinstance(start_time, datetime):
-                start_time = default_start
-            if not isinstance(end_time, datetime):
-                end_time = default_end or start_time
-            if start_time and end_time and end_time < start_time:
-                end_time = start_time
-            label = f"Sequential · {product}" if product else f"Sequential · Producto {idx}"
-            pantalla_id = f"Seq-{idx}"
-            screens.append(
-                {
-                    "label": label,
-                    "pantalla_id": pantalla_id,
-                    "productos": [product],
-                    "start_time": start_time or default_start,
-                    "end_time": end_time or start_time or default_end,
-                }
-            )
+        frame_entry = frames_map.get(selected_product, {}) if selected_product else {}
+        start_time = frame_entry.get("start") if isinstance(frame_entry.get("start"), datetime) else default_start
+        end_time = frame_entry.get("end") if isinstance(frame_entry.get("end"), datetime) else default_end or start_time
+        screens.append(
+            {
+                "label": "Sequential",
+                "pantalla_id": "Seq-1",
+                "productos": [selected_product] if selected_product else [],
+                "start_time": start_time,
+                "end_time": end_time,
+            }
+        )
         return screens
 
     fallback = _get_visible_products_by_screen(mode, state)
@@ -1749,6 +1760,7 @@ def _build_experiment_results(
     sequence: list = st.session_state.get("mode_sequence", [])
     sessions: dict = st.session_state.get("mode_sessions", {})
     smartscore_map = _load_user_smartscore_map(user_name)
+    st.session_state["smart_scores"] = smartscore_map
     experiment_start = st.session_state.get("experiment_start_time")
     experiment_end = st.session_state.get("experiment_end_time")
     experiment_start_iso = (
@@ -1791,7 +1803,6 @@ def _build_experiment_results(
         mode_duration = None
         if start_time and completion_time:
             mode_duration = (completion_time - start_time).total_seconds()
-        recomendado = state.get("producto_recomendado")
         base_record = {
             "Usuario": user_name,
             "ID_Participante": user_id or st.session_state.get("tab2_user_id", ""),
@@ -1889,144 +1900,225 @@ def _build_experiment_results(
                 return float(value)
             return fallback
 
-        pantalla_labels: list[str] = []
-        pantalla_ids: list[str] = []
-        productos_ordenados: list[str] = []
-        productos_vistos_set: set[str] = set()
-        frame_inicio_frames: list[int] = []
-        frame_fin_frames: list[int] = []
-        aois_totales: dict[str, list[float]] = {}
+        ab_stage_meta = {
+            "A/B-Par1": {"stage_label": "pair_1", "choice_index": 0},
+            "A/B-Par2": {"stage_label": "pair_2", "choice_index": 1},
+            "A/B-Final": {"stage_label": "final", "choice_index": None},
+        }
+        stage_choices: list[str] = state.get("ab_stage_choices", []) or []
+        stage_durations: dict = state.get("ab_stage_durations", {}) or {}
+        stage_starts: dict = state.get("ab_stage_starts", {}) or {}
+        gaze_history = state.get("gaze_history", [])
 
-        smartscore_nombre_sel = None
-        smartscore_valor_sel = None
-        smartscore_nombre_rec = None
-        smartscore_valor_rec = None
-
-        if smartscore_map:
-            seleccionado_stem = state.get("selected")
-            if isinstance(seleccionado_stem, str) and seleccionado_stem.strip():
-                entry_sel = _find_smartscore_for_image(
-                    seleccionado_stem, smartscore_map
-                )
-                if entry_sel:
-                    smartscore_nombre_sel, smartscore_valor_sel = entry_sel
-
-            recomendado_stem = state.get("producto_recomendado")
-            if isinstance(recomendado_stem, str) and recomendado_stem.strip():
-                entry_rec = _find_smartscore_for_image(
-                    recomendado_stem, smartscore_map
-                )
-                if entry_rec:
-                    smartscore_nombre_rec, smartscore_valor_rec = entry_rec
-
-        recommended_name = None
-        if smartscore_nombre_rec:
-            recommended_name = smartscore_nombre_rec
-        elif isinstance(recomendado, str) and recomendado.strip():
-            recommended_name = _resolve_display_name(recomendado)
+        seq_metrics = {}
+        if mode == "Sequential":
+            durations_map = state.get("seq_product_durations", {})
+            visits_map = state.get("seq_product_visits", {})
+            history = state.get("seq_navigation_history", [])
+            seq_metrics = {
+                "Secuencial · Tiempo por producto (s)": _format_metric_dict(
+                    durations_map
+                ),
+                "Secuencial · Visitas por producto": _format_metric_dict(
+                    visits_map
+                ),
+                "Secuencial · Veces botón regresar": state.get(
+                    "seq_back_clicks", 0
+                ),
+                "Secuencial · Veces botón siguiente": state.get(
+                    "seq_next_clicks", 0
+                ),
+                "Secuencial · Historial navegación": (
+                    json.dumps(history, ensure_ascii=False) if history else ""
+                ),
+            }
 
         for idx, screen in enumerate(screen_views, start=1):
-            pantalla_labels.append(screen.get("label", ""))
+            pantalla_label = screen.get("label", mode)
             pantalla_id = str(screen.get("pantalla_id") or f"{mode}-{idx}")
-            pantalla_ids.append(pantalla_id)
-            screen_products = [str(prod) for prod in screen.get("productos", [])]
+            screen_products = [
+                str(prod).strip()
+                for prod in screen.get("productos", [])
+                if str(prod).strip()
+            ]
             display_products = [_resolve_display_name(prod) for prod in screen_products]
-            for name in display_products:
-                if name and name not in productos_vistos_set:
-                    productos_vistos_set.add(name)
-                    productos_ordenados.append(name)
+            productos_visibles = [
+                {"display_name": display}
+                for display in display_products
+                if display
+            ]
+
+            screen_start = screen.get("start_time")
+            if not isinstance(screen_start, datetime):
+                screen_start = _default_mode_start_time(state)
+            screen_end = screen.get("end_time")
+            if not isinstance(screen_end, datetime):
+                screen_end = _default_mode_end_time(state) or screen_start
+
+            stage_meta = ab_stage_meta.get(pantalla_id) if mode == "A/B" else None
+            selected_stem = ""
+            selection_duration_value = None
+            selection_timestamp_value: Optional[datetime] = None
+            if stage_meta:
+                stage_label = stage_meta["stage_label"]
+                choice_idx = stage_meta["choice_index"]
+                if choice_idx is not None and len(stage_choices) > choice_idx:
+                    selected_stem = stage_choices[choice_idx]
+                elif stage_label == "final":
+                    selected_stem = state.get("selected") or ""
+                duration_candidate = stage_durations.get(stage_label)
+                if isinstance(duration_candidate, (int, float)):
+                    selection_duration_value = float(duration_candidate)
+                if stage_label == "final":
+                    final_ts = state.get("selection_timestamp")
+                    if isinstance(final_ts, datetime):
+                        selection_timestamp_value = final_ts
+                if selection_timestamp_value is None:
+                    start_candidate = stage_starts.get(stage_label)
+                    if (
+                        isinstance(start_candidate, datetime)
+                        and isinstance(selection_duration_value, (int, float))
+                    ):
+                        selection_timestamp_value = start_candidate + timedelta(
+                            seconds=float(selection_duration_value)
+                        )
+            else:
+                selected_stem = state.get("selected") or ""
+                selection_duration_value = selection_duration
+                selection_timestamp_value = selection_time
+
+            if selection_timestamp_value is None and isinstance(screen_end, datetime):
+                selection_timestamp_value = screen_end
+            if selection_duration_value is None and isinstance(screen_start, datetime) and isinstance(screen_end, datetime):
+                selection_duration_value = (screen_end - screen_start).total_seconds()
+
+            recommended_entry = _select_highest_smartscore_from_names(
+                screen_products, smartscore_map
+            )
+            recommended_display = None
+            recommended_score = None
+            if recommended_entry:
+                recommended_display, recommended_score = recommended_entry
+            elif mode == "Sequential" and screen_products:
+                recommended_display = _resolve_display_name(screen_products[0])
 
             productos_visibles = [
                 {
                     "display_name": display,
+                    "es_recomendado": recommended_display == display,
                 }
                 for display in display_products
+                if display
             ]
 
             aois = obtener_aoi_layout(
                 modo=mode,
                 productos_visibles=productos_visibles,
-                producto_recomendado=recommended_name,
+                producto_recomendado=recommended_display,
                 pantalla_id=pantalla_id,
             )
-            aois_totales.update(aois)
 
-            frame_start_seconds = _seconds_from_value(screen.get("start_time"), inicio_s)
-            frame_end_seconds = _seconds_from_value(screen.get("end_time"), fin_s)
+            record = base_record.copy()
+            record["Pantalla_mostrada"] = pantalla_layout
+            record["Pantalla"] = pantalla_label
+            record["Pantalla_ID"] = pantalla_id
+            record["Productos visibles en pantalla"] = ", ".join(display_products)
+            record["Opciones Presentadas"] = ", ".join(display_products)
+
+            record["Inicio del modo"] = (
+                screen_start.isoformat() if isinstance(screen_start, datetime) else ""
+            )
+            record["Inicio del modo (s)"] = (
+                screen_start.timestamp() if isinstance(screen_start, datetime) else inicio_s
+            )
+            record["Momento de finalización"] = (
+                screen_end.isoformat() if isinstance(screen_end, datetime) else ""
+            )
+            record["Momento de finalización (s)"] = (
+                screen_end.timestamp() if isinstance(screen_end, datetime) else fin_s
+            )
+            if selection_timestamp_value and isinstance(selection_timestamp_value, datetime):
+                record["Momento de selección"] = selection_timestamp_value.isoformat()
+                record["Momento de selección (s)"] = selection_timestamp_value.timestamp()
+            else:
+                record["Momento de selección"] = ""
+                record["Momento de selección (s)"] = None
+
+            if isinstance(selection_duration_value, (int, float)):
+                record["Tiempo hasta selección (s)"] = float(selection_duration_value)
+            else:
+                record["Tiempo hasta selección (s)"] = None
+
+            if isinstance(screen_start, datetime) and isinstance(screen_end, datetime):
+                record["Duración del modo (s)"] = (
+                    screen_end - screen_start
+                ).total_seconds()
+            else:
+                record["Duración del modo (s)"] = selection_duration_value
+
+            frame_start_seconds = _seconds_from_value(screen_start, inicio_s)
+            frame_end_seconds = _seconds_from_value(screen_end, fin_s)
             if frame_start_seconds is None and frame_end_seconds is not None:
                 frame_start_seconds = frame_end_seconds
             if frame_end_seconds is None and frame_start_seconds is not None:
                 frame_end_seconds = frame_start_seconds
-            frame_inicio = buscar_frame(frame_start_seconds)
-            frame_fin = buscar_frame(frame_end_seconds)
-            if frame_inicio is not None:
-                frame_inicio_frames.append(frame_inicio)
-            if frame_fin is not None:
-                frame_fin_frames.append(frame_fin)
+            record["Frame_inicio"] = buscar_frame(frame_start_seconds)
+            record["Frame_fin"] = buscar_frame(frame_end_seconds)
 
-        record = base_record.copy()
-        record["Pantalla_mostrada"] = pantalla_layout
-        record["Pantalla"] = " | ".join(filter(None, pantalla_labels)) or pantalla_layout
-        record["Pantalla_ID"] = " | ".join(filter(None, pantalla_ids))
-        record["Productos visibles en pantalla"] = ", ".join(productos_ordenados)
-        record["Frame_inicio"] = min(frame_inicio_frames) if frame_inicio_frames else None
-        record["Frame_fin"] = max(frame_fin_frames) if frame_fin_frames else None
+            selected_display = _resolve_display_name(selected_stem)
+            selected_score = None
+            if selected_stem:
+                entry_sel = _find_smartscore_for_image(selected_stem, smartscore_map)
+                if entry_sel:
+                    selected_display, selected_score = entry_sel
 
-        if smartscore_enabled and recommended_name:
-            atn = calcular_atencion_recomendado(
-                aois_totales, state.get("gaze_history", []), recommended_name
-            )
-        else:
-            atn = default_atn
+            record["Producto Seleccionado"] = selected_display
 
-        record["Atencion_Recomendado_Tiempo"] = atn["tiempo"]
-        record["Atencion_Recomendado_Fijaciones"] = atn["fijaciones"]
-        record["Atencion_Recomendado_PrimeraMirada"] = atn["primera_mirada"]
+            smartscore_nombre_rec = recommended_display or ""
+            smartscore_valor_rec = recommended_score
+            if recommended_display and (recommended_entry is None) and screen_products:
+                entry_rec = _find_smartscore_for_image(screen_products[0], smartscore_map)
+                if entry_rec:
+                    smartscore_nombre_rec, smartscore_valor_rec = entry_rec
 
-        record["AOIs"] = json.dumps(aois_totales, ensure_ascii=False)
+            record["SmartScore · Producto Seleccionado"] = selected_display or ""
+            record["SmartScore · Puntaje Seleccionado"] = selected_score
+            record["SmartScore · Producto Recomendado"] = smartscore_nombre_rec
+            record["SmartScore · Puntaje Recomendado"] = smartscore_valor_rec
 
-        if mode == "A/B":
-            stage_durations = state.get("ab_stage_durations", {})
-            record["Tiempo comparación A/B · Par 1 (s)"] = stage_durations.get(
-                "pair_1"
-            )
-            record["Tiempo comparación A/B · Par 2 (s)"] = stage_durations.get(
-                "pair_2"
-            )
-            record["Tiempo comparación A/B · Final (s)"] = stage_durations.get(
-                "final"
-            )
+            if mode == "Sequential" and seq_metrics:
+                record.update(seq_metrics)
 
-        # ==============================
-        # SMARTSCORE – AGREGAR AL EXCEL
-        # ==============================
-        record["SmartScore · Producto Seleccionado"] = smartscore_nombre_sel
-        record["SmartScore · Puntaje Seleccionado"] = smartscore_valor_sel
-        record["SmartScore · Producto Recomendado"] = smartscore_nombre_rec
-        record["SmartScore · Puntaje Recomendado"] = smartscore_valor_rec
-        # ==============================
+            if mode == "A/B":
+                record["Tiempo comparación A/B · Par 1 (s)"] = (
+                    stage_durations.get("pair_1")
+                    if pantalla_id == "A/B-Par1"
+                    else None
+                )
+                record["Tiempo comparación A/B · Par 2 (s)"] = (
+                    stage_durations.get("pair_2")
+                    if pantalla_id == "A/B-Par2"
+                    else None
+                )
+                record["Tiempo comparación A/B · Final (s)"] = (
+                    stage_durations.get("final")
+                    if pantalla_id == "A/B-Final"
+                    else None
+                )
 
-        if mode == "Sequential":
-            durations_map = state.get("seq_product_durations", {})
-            visits_map = state.get("seq_product_visits", {})
-            history = state.get("seq_navigation_history", [])
-            record["Secuencial · Tiempo por producto (s)"] = _format_metric_dict(
-                durations_map
-            )
-            record["Secuencial · Visitas por producto"] = _format_metric_dict(
-                visits_map
-            )
-            record["Secuencial · Veces botón regresar"] = state.get(
-                "seq_back_clicks", 0
-            )
-            record["Secuencial · Veces botón siguiente"] = state.get(
-                "seq_next_clicks", 0
-            )
-            record["Secuencial · Historial navegación"] = (
-                json.dumps(history, ensure_ascii=False) if history else ""
-            )
+            if smartscore_enabled and recommended_display:
+                atn = calcular_atencion_recomendado(
+                    aois, gaze_history, recommended_display
+                )
+            else:
+                atn = default_atn
 
-        records.append(record)
+            record["Atencion_Recomendado_Tiempo"] = atn["tiempo"]
+            record["Atencion_Recomendado_Fijaciones"] = atn["fijaciones"]
+            record["Atencion_Recomendado_PrimeraMirada"] = atn["primera_mirada"]
+            record["AOIs"] = json.dumps(aois, ensure_ascii=False)
+
+            records.append(record)
 
     summary_df = pd.DataFrame(records)
 
@@ -2091,6 +2183,24 @@ def _select_highest_smartscore_product(
     best_score = float("-inf")
     for image_path in image_paths:
         entry = _find_smartscore_for_image(image_path.stem, smartscore_map)
+        if not entry:
+            continue
+        _, score_value = entry
+        if best_entry is None or score_value > best_score:
+            best_entry = entry
+            best_score = score_value
+    return best_entry
+
+
+def _select_highest_smartscore_from_names(
+    product_names: list[str], smartscore_map: dict[str, float]
+) -> Optional[tuple[str, float]]:
+    best_entry: Optional[tuple[str, float]] = None
+    best_score = float("-inf")
+    for name in product_names:
+        if not name:
+            continue
+        entry = _find_smartscore_for_image(name, smartscore_map)
         if not entry:
             continue
         _, score_value = entry
@@ -3110,27 +3220,18 @@ with tab2:
                     st.warning(t("tab2_need_four_images_ab"))
                 else:
                     display_indexes = _get_ab_display_indexes(current_state)
-                    highlighted_product = current_state.get(
-                        "ab_highlighted_product"
+                    visible_paths: list[Path] = [
+                        images[image_index]
+                        for image_index in display_indexes
+                        if 0 <= image_index < len(images)
+                    ]
+                    best_entry = _select_highest_smartscore_product(
+                        visible_paths, smartscore_map
                     )
-                    state_modified = False
-                    if highlighted_product is None:
-                        best_entry = _select_highest_smartscore_product(
-                            images, smartscore_map
-                        )
-                        highlighted_product = best_entry[0] if best_entry else None
-                        current_state["ab_highlighted_product"] = highlighted_product
-                        current_state["producto_recomendado"] = highlighted_product
-                        state_modified = True
-                    if (
-                        current_state.get("producto_recomendado")
-                        != highlighted_product
-                    ):
-                        current_state["producto_recomendado"] = highlighted_product
-                        state_modified = True
-                    if state_modified:
-                        mode_sessions[current_mode] = current_state
-                        st.session_state["mode_sessions"] = mode_sessions
+                    highlighted_product = best_entry[0] if best_entry else None
+                    current_state["ab_highlighted_product"] = highlighted_product
+                    mode_sessions[current_mode] = current_state
+                    st.session_state["mode_sessions"] = mode_sessions
                     if len(display_indexes) != 2:
                         st.warning(t("tab2_no_images_warning"))
                     else:
@@ -3206,14 +3307,11 @@ with tab2:
                     st.session_state["mode_sessions"] = mode_sessions
 
                 current_image = images[index]
-                seq_best = _select_highest_smartscore_product(images, smartscore_map)
-                highlighted_product = seq_best[0] if seq_best else None
-                current_state["producto_recomendado"] = highlighted_product
-                if (
-                    current_state.get("producto_recomendado")
-                    != highlighted_product
-                ):
-                    current_state["producto_recomendado"] = highlighted_product
+                seq_entry = _find_smartscore_for_image(
+                    current_image.stem, smartscore_map
+                )
+                highlighted_product = seq_entry[0] if seq_entry else None
+                current_state["producto_recomendado"] = current_image.stem
                 current_state = _ensure_seq_view_state(current_state, current_image)
                 mode_sessions[current_mode] = current_state
                 st.session_state["mode_sessions"] = mode_sessions
