@@ -34,6 +34,18 @@ LANGUAGE_CONTENT = {
         "page_caption": "Share your name, age, and gender, answer the questionnaire, and help us prepare your personalized SmartScore for future experiments.",
         "intro_text": "Use this short form to tell us what matters most when choosing instant food products so we can fine-tune the SmartScore you'll likely see in upcoming experiments.",
         "questionnaire_header": "Preference questionnaire",
+        "tab1_context_title": "What SmartScore means before you answer",
+        "tab1_context_body": (
+            "SmartScore is a personalized compatibility score that mixes your priorities to recommend instant or ready-to-eat meals later on. "
+            "Before moving the sliders, remember that each one refers to a specific decision criterion when you shop for quick meals:\n"
+            "- Portion size = how much you care about servings that fill you up or let you share.\n"
+            "- Healthy diet = whether the meal helps you stick to balanced nutrition.\n"
+            "- Low in salt = if keeping sodium down is important to you.\n"
+            "- Low in saturated fat = if you try to limit this type of fat.\n"
+            "- Natural/organic ingredients = whether you prefer recognizable or organic ingredients.\n"
+            "- Quick and easy to prepare = you value convenience and minimal prep.\n"
+            "- Low price / good value = how strongly price or value influences your choice."
+        ),
         "respondent_data_subheader": "Respondent details",
         "name_label": "Full name",
         "age_label": "Age",
@@ -107,6 +119,18 @@ LANGUAGE_CONTENT = {
         "page_caption": "Comparte tu nombre, edad y género, responde el cuestionario y ayúdanos a preparar tu SmartScore personalizado para futuros experimentos.",
         "intro_text": "Este breve cuestionario nos ayuda a entender qué valoras al elegir productos de comida instantánea y a ajustar el SmartScore que probablemente verás en experimentos posteriores (no de inmediato).",
         "questionnaire_header": "Cuestionario de preferencias",
+        "tab1_context_title": "Antes de contestar: ¿a qué se refieren las preguntas?",
+        "tab1_context_body": (
+            "SmartScore es un puntaje de compatibilidad que combina tus prioridades para recomendarte comidas instantáneas o listas para comer en futuras pruebas. "
+            "Antes de mover los deslizadores, ten presente que cada pregunta apunta a un criterio al elegir comidas rápidas:\n"
+            "- Tamaño de la porción = qué tanto te importa que rinda o te deje satisfecho/a.\n"
+            "- Llevar una dieta sana = si buscas que complemente una alimentación equilibrada.\n"
+            "- Bajo en sal = qué tan relevante es limitar el sodio.\n"
+            "- Bajo en grasa saturada = si tratas de reducir este tipo de grasa.\n"
+            "- Ingredientes naturales/orgánicos = si prefieres ingredientes reconocibles u orgánicos.\n"
+            "- Que sea rápido y fácil = priorizas conveniencia y poca preparación.\n"
+            "- Precio bajo / buena relación valor-precio = cuánto influye el costo en tu decisión."
+        ),
         "respondent_data_subheader": "Datos de quien responde",
         "name_label": "Nombre completo",
         "age_label": "Edad",
@@ -2565,6 +2589,8 @@ with tab1:
     _apply_reset_form_state()
 
     st.header(t("questionnaire_header"))
+    st.markdown(f"**{t('tab1_context_title')}**")
+    st.info(t("tab1_context_body"))
 
     with st.form("cuestionario_form"):
         st.subheader(t("respondent_data_subheader"))
