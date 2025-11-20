@@ -296,6 +296,8 @@ st.session_state.setdefault("tab2_smartscore_map", {})
 st.session_state.setdefault("tab2_smartscore_owner", "")
 st.session_state.setdefault("smart_scores", {})
 st.session_state.setdefault("tab2_name_query", "")
+st.session_state.setdefault("grupo_asignado_auto", False)
+st.session_state.setdefault("auto_assignment_feedback", None)
 VISUAL_MODE_OPTIONS = ["A/B", "Grid", "Sequential"]
 VISUAL_SUBFOLDERS = {"A/B": "A_B", "Grid": "Grid", "Sequential": "Sequential"}
 VALID_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
@@ -3003,7 +3005,17 @@ with tab1:
             st.session_state["success_path"] = ""
             st.session_state["trigger_balloons"] = False
 
+        feedback = st.session_state.get("auto_assignment_feedback")
+        if feedback:
+            feedback_type, feedback_message = feedback
+            if feedback_type == "success":
+                st.success(feedback_message)
+            else:
+                st.warning(feedback_message)
+            st.session_state["auto_assignment_feedback"] = None
+
     if submitted:
+        st.session_state["grupo_asignado_auto"] = False
         errores = []
         if not nombre_completo.strip():
             errores.append(t("error_name_required"))
@@ -3152,6 +3164,24 @@ with tab1:
                     except Exception as update_error:
                         st.error(t("error_update_file", path=ruta_archivo, error=update_error))
                     else:
+                        if not st.session_state.get("grupo_asignado_auto", False):
+                            assignment_feedback = None
+                            try:
+                                asignar_grupos_experimentales()
+                            except Exception as assignment_error:
+                                assignment_feedback = (
+                                    "warning",
+                                    f"No se pudo asignar el grupo automáticamente: {assignment_error}",
+                                )
+                            else:
+                                assignment_feedback = (
+                                    "success",
+                                    f"Grupo asignado automáticamente para el participante {persona_id}",
+                                )
+                            finally:
+                                st.session_state["grupo_asignado_auto"] = True
+                                if assignment_feedback:
+                                    st.session_state["auto_assignment_feedback"] = assignment_feedback
                         show_success_message(ruta_archivo)
 
     st.markdown("---")
