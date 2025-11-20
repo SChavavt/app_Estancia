@@ -3861,21 +3861,6 @@ with tab_admin:
         _render_upload("analysis_video", "world.mp4 (opcional)", ["mp4"], True)
 
     st.divider()
-    st.caption("Asignación automática de grupos experimentales equilibrados.")
-    st.subheader("Asignación automática de grupos experimentales")
-
-    if st.button("⚖️ Ejecutar asignación equilibrada"):
-        resultado = asignar_grupos_experimentales()
-        if resultado["status"] == "ok":
-            st.success("Grupos asignados correctamente en GitHub.")
-        else:
-            st.error(
-                resultado.get(
-                    "msg", "Ocurrió un error durante la asignación de grupos."
-                )
-            )
-
-    st.divider()
     st.subheader("📊 Análisis del Experimento – Integración App + Pupil Labs")
     st.caption(
         "Combina los datos generados por la app del experimento visual con los archivos esenciales de Pupil Labs."
