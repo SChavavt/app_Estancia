@@ -2322,6 +2322,103 @@ def _experiment_results_to_excel_bytes(summary_df: pd.DataFrame) -> bytes:
     return buffer.getvalue()
 
 
+def guardar_excel_en_github(
+    bytes_excel: bytes, id_participante: str, filename: str
+) -> bool:
+    if not id_participante:
+        st.error("No se encontró el ID del participante para guardar en GitHub.")
+        return False
+
+    try:
+        github_client = Github(st.secrets["GITHUB_TOKEN"])
+        github_user = github_client.get_user()
+        repo = github_user.get_repo("app_Estancia")
+    except KeyError:
+        st.error("No se configuró el token de GitHub en st.secrets.")
+        return False
+    except GithubException as gh_error:
+        datos_error = getattr(gh_error, "data", {})
+        mensaje_error = (
+            datos_error.get("message", str(gh_error))
+            if isinstance(datos_error, dict)
+            else str(gh_error)
+        )
+        st.error(f"❌ Error al conectar con GitHub: {mensaje_error}")
+        return False
+    except Exception as generic_error:
+        st.error(f"❌ Error al conectar con GitHub: {generic_error}")
+        return False
+
+    folder = f"data_participantes/{id_participante}"
+    path = f"{folder}/{filename}"
+
+    try:
+        existing_file = repo.get_contents(path)
+    except GithubException as gh_error:
+        if getattr(gh_error, "status", None) == 404:
+            try:
+                repo.create_file(
+                    path,
+                    "Create experiment data",
+                    bytes_excel,
+                    branch="main",
+                )
+                st.success(
+                    f"Archivo guardado automáticamente en GitHub para el participante {id_participante}"
+                )
+                return True
+            except GithubException as create_error:
+                datos_error = getattr(create_error, "data", {})
+                mensaje_error = (
+                    datos_error.get("message", str(create_error))
+                    if isinstance(datos_error, dict)
+                    else str(create_error)
+                )
+                st.error(
+                    f"❌ Error al crear el archivo en GitHub: {mensaje_error}"
+                )
+                return False
+            except Exception as generic_error:
+                st.error(f"❌ Error al crear el archivo en GitHub: {generic_error}")
+                return False
+        datos_error = getattr(gh_error, "data", {})
+        mensaje_error = (
+            datos_error.get("message", str(gh_error))
+            if isinstance(datos_error, dict)
+            else str(gh_error)
+        )
+        st.error(f"❌ Error al acceder al archivo en GitHub: {mensaje_error}")
+        return False
+    except Exception as generic_error:
+        st.error(f"❌ Error al acceder al archivo en GitHub: {generic_error}")
+        return False
+
+    try:
+        repo.update_file(
+            path,
+            "Update experiment data",
+            bytes_excel,
+            existing_file.sha,
+            branch="main",
+        )
+        st.success(
+            f"Archivo guardado automáticamente en GitHub para el participante {id_participante}"
+        )
+        return True
+    except GithubException as update_error:
+        datos_error = getattr(update_error, "data", {})
+        mensaje_error = (
+            datos_error.get("message", str(update_error))
+            if isinstance(datos_error, dict)
+            else str(update_error)
+        )
+        st.error(f"❌ Error al actualizar el archivo en GitHub: {mensaje_error}")
+        return False
+    except Exception as generic_error:
+        st.error(f"❌ Error al actualizar el archivo en GitHub: {generic_error}")
+        return False
+
+
 def _sanitize_participant_id(df_app: pd.DataFrame) -> str:
     """Return a safe identifier for filenames based on the participant ID."""
 
@@ -3181,9 +3278,18 @@ with tab2:
                     if result_path
                     else "resultados_experimento_visual.xlsx"
                 )
+                excel_bytes = _experiment_results_to_excel_bytes(result_df)
+                participant_id = st.session_state.get("tab2_user_id", "")
+                upload_key = f"github_upload_{participant_id}"
+                if not st.session_state.get(upload_key, False):
+                    excel_filename = f"experimento_{participant_id}.xlsx"
+                    upload_success = guardar_excel_en_github(
+                        excel_bytes, participant_id, excel_filename
+                    )
+                    st.session_state[upload_key] = upload_success
                 st.download_button(
                     t("tab2_download_results"),
-                    data=_experiment_results_to_excel_bytes(result_df),
+                    data=excel_bytes,
                     file_name=download_name,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
