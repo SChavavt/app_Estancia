@@ -634,7 +634,6 @@ def _set_tab2_smartscore_map(user_name: str) -> None:
     if not cleaned:
         st.session_state["tab2_smartscore_map"] = {}
         st.session_state["tab2_smartscore_owner"] = ""
-        st.session_state["tab2_recommended_product"] = ""
         st.session_state["smart_scores"] = {}
         sessions = st.session_state.get("mode_sessions", {})
         for mode_state in sessions.values():
@@ -645,13 +644,6 @@ def _set_tab2_smartscore_map(user_name: str) -> None:
 
     st.session_state["tab2_smartscore_map"] = _load_user_smartscore_map(cleaned)
     st.session_state["tab2_smartscore_owner"] = cleaned
-    recommended_entry = _select_highest_smartscore_from_names(
-        list(st.session_state["tab2_smartscore_map"].keys()),
-        st.session_state["tab2_smartscore_map"],
-    )
-    st.session_state["tab2_recommended_product"] = (
-        recommended_entry[0] if recommended_entry else ""
-    )
     st.session_state["smart_scores"] = st.session_state["tab2_smartscore_map"]
     sessions = st.session_state.get("mode_sessions", {})
     for mode_state in sessions.values():
@@ -1955,6 +1947,12 @@ def _build_experiment_results(
                 if str(prod).strip()
             ]
             display_products = [_resolve_display_name(prod) for prod in screen_products]
+            productos_visibles = [
+                {"display_name": display}
+                for display in display_products
+                if display
+            ]
+
             screen_start = screen.get("start_time")
             if not isinstance(screen_start, datetime):
                 screen_start = _default_mode_start_time(state)
@@ -1999,23 +1997,19 @@ def _build_experiment_results(
             if selection_duration_value is None and isinstance(screen_start, datetime) and isinstance(screen_end, datetime):
                 selection_duration_value = (screen_end - screen_start).total_seconds()
 
-            recommended_entry = None
-            if producto_top:
-                producto_top_key = _normalize_product_key(producto_top)
-                for product in screen_products:
-                    entry = _find_smartscore_for_image(product, smartscore_map)
-                    if entry and _normalize_product_key(entry[0]) == producto_top_key:
-                        recommended_entry = entry
-                        break
-
+            recommended_entry = _select_highest_smartscore_from_names(
+                screen_products, smartscore_map
+            )
             recommended_display = None
             recommended_score = None
             if recommended_entry:
                 recommended_display, recommended_score = recommended_entry
+            elif mode == "Sequential" and screen_products:
+                recommended_display = _resolve_display_name(screen_products[0])
 
-            producto_top_visible = None
-            if recommended_display:
-                producto_top_visible = _resolve_display_name(recommended_display)
+            producto_top_visible = (
+                producto_top if producto_top in display_products else None
+            )
 
             productos_visibles = [
                 {
@@ -2091,6 +2085,10 @@ def _build_experiment_results(
 
             smartscore_nombre_rec = recommended_display or ""
             smartscore_valor_rec = recommended_score
+            if recommended_display and (recommended_entry is None) and screen_products:
+                entry_rec = _find_smartscore_for_image(screen_products[0], smartscore_map)
+                if entry_rec:
+                    smartscore_nombre_rec, smartscore_valor_rec = entry_rec
 
             record["SmartScore · Producto Seleccionado"] = selected_display or ""
             record["SmartScore · Puntaje Seleccionado"] = selected_score
@@ -2219,22 +2217,6 @@ def _select_highest_smartscore_from_names(
             best_entry = entry
             best_score = score_value
     return best_entry
-
-
-def _get_recommended_product_for_participant() -> Optional[str]:
-    recommended = st.session_state.get("tab2_recommended_product", "").strip()
-    if recommended:
-        return recommended
-
-    smartscore_map: dict[str, float] = st.session_state.get("tab2_smartscore_map", {})
-    entry = _select_highest_smartscore_from_names(
-        list(smartscore_map.keys()), smartscore_map
-    )
-    if entry:
-        st.session_state["tab2_recommended_product"] = entry[0]
-        return entry[0]
-
-    return None
 
 
 def _render_visual_image(
@@ -3182,16 +3164,6 @@ with tab2:
 
         images = current_state.get("images", [])
         smartscore_map = st.session_state.get("tab2_smartscore_map", {})
-        recommended_product = _get_recommended_product_for_participant()
-        recommended_key = _normalize_product_key(recommended_product) if recommended_product else ""
-
-        def _is_recommended_image(image_path: Path) -> bool:
-            if not recommended_product:
-                return False
-            entry = _find_smartscore_for_image(image_path.stem, smartscore_map)
-            if not entry:
-                return False
-            return _normalize_product_key(entry[0]) == recommended_key
 
         info_message = t(
             "tab2_mode_info",
@@ -3262,11 +3234,10 @@ with tab2:
                         for image_index in display_indexes
                         if 0 <= image_index < len(images)
                     ]
-                    highlighted_product = (
-                        recommended_product
-                        if any(_is_recommended_image(path) for path in visible_paths)
-                        else None
+                    best_entry = _select_highest_smartscore_product(
+                        visible_paths, smartscore_map
                     )
+                    highlighted_product = best_entry[0] if best_entry else None
                     current_state["ab_highlighted_product"] = highlighted_product
                     mode_sessions[current_mode] = current_state
                     st.session_state["mode_sessions"] = mode_sessions
@@ -3301,11 +3272,10 @@ with tab2:
                 if len(images) < 2:
                     st.warning(t("tab2_need_two_images_grid"))
                 else:
-                    highlighted_product = (
-                        recommended_product
-                        if any(_is_recommended_image(image) for image in images)
-                        else None
+                    grid_best = _select_highest_smartscore_product(
+                        images, smartscore_map
                     )
+                    highlighted_product = grid_best[0] if grid_best else None
                     current_state["producto_recomendado"] = highlighted_product
                     mode_sessions[current_mode] = current_state
                     st.session_state["mode_sessions"] = mode_sessions
@@ -3346,10 +3316,11 @@ with tab2:
                     st.session_state["mode_sessions"] = mode_sessions
 
                 current_image = images[index]
-                highlighted_product = (
-                    recommended_product if _is_recommended_image(current_image) else None
+                seq_entry = _find_smartscore_for_image(
+                    current_image.stem, smartscore_map
                 )
-                current_state["producto_recomendado"] = highlighted_product
+                highlighted_product = seq_entry[0] if seq_entry else None
+                current_state["producto_recomendado"] = current_image.stem
                 current_state = _ensure_seq_view_state(current_state, current_image)
                 mode_sessions[current_mode] = current_state
                 st.session_state["mode_sessions"] = mode_sessions
