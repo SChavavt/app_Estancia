@@ -599,13 +599,11 @@ def get_user_group(user_name: str) -> str:
     if not cleaned:
         return ""
 
-    if "GITHUB_TOKEN" not in st.secrets:
+    repo = _get_github_repo_instance()
+    if repo is None:
         return ""
 
     try:
-        github_client = Github(st.secrets["GITHUB_TOKEN"])
-        github_user = github_client.get_user()
-        repo = github_user.get_repo("app_Estancia")
         contents = repo.get_contents(RESULTS_PATH_IN_REPO)
         excel_bytes = base64.b64decode(contents.content)
         df = pd.read_excel(BytesIO(excel_bytes))
@@ -2331,24 +2329,8 @@ def guardar_excel_en_github(
         st.error("No se encontró el ID del participante para guardar en GitHub.")
         return False
 
-    try:
-        github_client = Github(st.secrets["GITHUB_TOKEN"])
-        github_user = github_client.get_user()
-        repo = github_user.get_repo("app_Estancia")
-    except KeyError:
-        st.error("No se configuró el token de GitHub en st.secrets.")
-        return False
-    except GithubException as gh_error:
-        datos_error = getattr(gh_error, "data", {})
-        mensaje_error = (
-            datos_error.get("message", str(gh_error))
-            if isinstance(datos_error, dict)
-            else str(gh_error)
-        )
-        st.error(f"❌ Error al conectar con GitHub: {mensaje_error}")
-        return False
-    except Exception as generic_error:
-        st.error(f"❌ Error al conectar con GitHub: {generic_error}")
+    repo = _get_github_repo_instance()
+    if repo is None:
         return False
 
     folder = f"data_participantes/{id_participante}"
@@ -2857,9 +2839,11 @@ def _get_github_repo_instance():
     if "GITHUB_TOKEN" not in st.secrets:
         st.error("No se configuró el token de GitHub en st.secrets.")
         return None
+
+    repo_name = st.secrets.get("GITHUB_REPO", "app_Estancia")
     try:
         github_client = Github(st.secrets["GITHUB_TOKEN"])
-        return github_client.get_repo("app_Estancia")
+        return github_client.get_repo(repo_name)
     except GithubException as gh_error:
         datos_error = getattr(gh_error, "data", {})
         mensaje_error = (
@@ -2867,7 +2851,9 @@ def _get_github_repo_instance():
             if isinstance(datos_error, dict)
             else str(gh_error)
         )
-        st.error(f"❌ Error al conectar con GitHub: {mensaje_error}")
+        st.error(
+            f"❌ Error al conectar con el repositorio '{repo_name}': {mensaje_error}"
+        )
     except Exception as generic_error:
         st.error(f"❌ Error al conectar con GitHub: {generic_error}")
     return None
@@ -3081,23 +3067,9 @@ def asignar_grupos_experimentales():
             return "FEMENINO"
         return "OTRO"
 
-    if "GITHUB_TOKEN" not in st.secrets:
+    repo = _get_github_repo_instance()
+    if repo is None:
         return {"status": "error", "msg": "Falta configurar GITHUB_TOKEN."}
-
-    try:
-        github_client = Github(st.secrets["GITHUB_TOKEN"])
-        github_user = github_client.get_user()
-        repo = github_user.get_repo("app_Estancia")
-    except GithubException as gh_error:
-        datos_error = getattr(gh_error, "data", {})
-        mensaje = (
-            datos_error.get("message", str(gh_error))
-            if isinstance(datos_error, dict)
-            else str(gh_error)
-        )
-        return {"status": "error", "msg": mensaje}
-    except Exception as generic_error:
-        return {"status": "error", "msg": str(generic_error)}
 
     for intento in range(2):
         try:
@@ -3424,21 +3396,8 @@ with tab1:
             if "GITHUB_TOKEN" not in st.secrets:
                 st.warning(t("warning_github_token"))
             else:
-                try:
-                    github_client = Github(st.secrets["GITHUB_TOKEN"])
-                    github_user = github_client.get_user()
-                    repo = github_user.get_repo("app_Estancia")
-                except GithubException as gh_error:
-                    datos_repo = getattr(gh_error, "data", {})
-                    mensaje_repo = (
-                        datos_repo.get("message", str(gh_error))
-                        if isinstance(datos_repo, dict)
-                        else str(gh_error)
-                    )
-                    st.error(t("error_repo_access", error=mensaje_repo))
-                except Exception as generic_error:
-                    st.error(t("error_github_connection", error=generic_error))
-                else:
+                repo = _get_github_repo_instance()
+                if repo is not None:
                     ruta_archivo = RESULTS_PATH_IN_REPO
                     pesos_actuales = weights.copy()
                     topk_df = topk.sort_values(["Categoría__App", "SmartScore"], ascending=[True, False])
