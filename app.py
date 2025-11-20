@@ -66,7 +66,7 @@ LANGUAGE_CONTENT = {
         "error_read_excel": "I couldn't read the Excel files in /data: {error}",
         "error_missing_column": "An expected column is missing in your Excel files: {column}",
         "warning_github_token": "⚠️ Configure the `GITHUB_TOKEN` secret to automatically save to GitHub.",
-        "error_repo_access": "❌ Couldn't access the 'app_Estancia' repository: {error}",
+        "error_repo_access": "❌ Couldn't access the 'SChavavt/app_Estancia' repository: {error}",
         "error_github_connection": "❌ Error connecting to GitHub: {error}",
         "error_sync_repo": "❌ Error syncing '{path}' with GitHub: {error}",
         "error_update_file": "❌ Error updating '{path}': {error}",
@@ -154,7 +154,7 @@ LANGUAGE_CONTENT = {
         "error_read_excel": "No pude leer los Excel en /data: {error}",
         "error_missing_column": "Falta una columna esperada en tus Excel: {column}",
         "warning_github_token": "⚠️ Configura el secret `GITHUB_TOKEN` para guardar automáticamente en GitHub.",
-        "error_repo_access": "❌ No se pudo acceder al repositorio 'app_Estancia': {error}",
+        "error_repo_access": "❌ No se pudo acceder al repositorio 'SChavavt/app_Estancia': {error}",
         "error_github_connection": "❌ Error al conectar con GitHub: {error}",
         "error_sync_repo": "❌ Error al sincronizar '{path}' con GitHub: {error}",
         "error_update_file": "❌ Error al actualizar '{path}': {error}",
@@ -250,6 +250,7 @@ DATA_FILES = {
 }
 
 RESULTS_PATH_IN_REPO = "Resultados_SmartScore.xlsx"  # se crea/actualiza vía API de GitHub
+REPO_FULL_NAME = "SChavavt/app_Estancia"
 
 INITIAL_FORM_VALUES = {
     "nombre_completo": "",
@@ -604,8 +605,7 @@ def get_user_group(user_name: str) -> str:
 
     try:
         github_client = Github(st.secrets["GITHUB_TOKEN"])
-        github_user = github_client.get_user()
-        repo = github_user.get_repo("app_Estancia")
+        repo = github_client.get_repo(REPO_FULL_NAME)
         contents = repo.get_contents(RESULTS_PATH_IN_REPO)
         excel_bytes = base64.b64decode(contents.content)
         df = pd.read_excel(BytesIO(excel_bytes))
@@ -2333,8 +2333,7 @@ def guardar_excel_en_github(
 
     try:
         github_client = Github(st.secrets["GITHUB_TOKEN"])
-        github_user = github_client.get_user()
-        repo = github_user.get_repo("app_Estancia")
+        repo = github_client.get_repo(REPO_FULL_NAME)
     except KeyError:
         st.error("No se configuró el token de GitHub en st.secrets.")
         return False
@@ -2859,7 +2858,7 @@ def _get_github_repo_instance():
         return None
     try:
         github_client = Github(st.secrets["GITHUB_TOKEN"])
-        return github_client.get_repo("app_Estancia")
+        return github_client.get_repo(REPO_FULL_NAME)
     except GithubException as gh_error:
         datos_error = getattr(gh_error, "data", {})
         mensaje_error = (
@@ -3086,8 +3085,7 @@ def asignar_grupos_experimentales():
 
     try:
         github_client = Github(st.secrets["GITHUB_TOKEN"])
-        github_user = github_client.get_user()
-        repo = github_user.get_repo("app_Estancia")
+        repo = github_client.get_repo(REPO_FULL_NAME)
     except GithubException as gh_error:
         datos_error = getattr(gh_error, "data", {})
         mensaje = (
@@ -3426,8 +3424,7 @@ with tab1:
             else:
                 try:
                     github_client = Github(st.secrets["GITHUB_TOKEN"])
-                    github_user = github_client.get_user()
-                    repo = github_user.get_repo("app_Estancia")
+                    repo = github_client.get_repo(REPO_FULL_NAME)
                 except GithubException as gh_error:
                     datos_repo = getattr(gh_error, "data", {})
                     mensaje_repo = (
