@@ -1781,6 +1781,11 @@ def _build_experiment_results(
 
     product_name_cache: dict[str, str] = {}
 
+    producto_top_entry = _select_highest_smartscore_from_names(
+        list(smartscore_map.keys()), smartscore_map
+    )
+    producto_top = producto_top_entry[0] if producto_top_entry else None
+
     def _resolve_display_name(product: str) -> str:
         if not product:
             return ""
@@ -2002,10 +2007,14 @@ def _build_experiment_results(
             elif mode == "Sequential" and screen_products:
                 recommended_display = _resolve_display_name(screen_products[0])
 
+            producto_top_visible = (
+                producto_top if producto_top in display_products else None
+            )
+
             productos_visibles = [
                 {
                     "display_name": display,
-                    "es_recomendado": recommended_display == display,
+                    "es_recomendado": producto_top_visible == display,
                 }
                 for display in display_products
                 if display
@@ -2014,7 +2023,7 @@ def _build_experiment_results(
             aois = obtener_aoi_layout(
                 modo=mode,
                 productos_visibles=productos_visibles,
-                producto_recomendado=recommended_display,
+                producto_recomendado=producto_top_visible,
                 pantalla_id=pantalla_id,
             )
 
