@@ -2399,86 +2399,15 @@ def _aoi_bounds_from_dict(raw_data: dict) -> Optional[dict[str, float]]:
     }
 
 
-def _point_inside_bounds(x: float, y: float, bounds: dict[str, float]) -> bool:
-    return (
-        x is not None
-        and y is not None
-        and bounds["x_min"] <= x <= bounds["x_max"]
-        and bounds["y_min"] <= y <= bounds["y_max"]
-    )
-
-
-
-def procesar_integracion_app_pupil(
-    excel_app_df: pd.DataFrame, gaze_df: pd.DataFrame, world_timestamps: np.ndarray
-) -> dict:
-    """Integrate the Smart Core app summary with Pupil Labs outputs."""
-
-    if world_timestamps is None:
-        raise ValueError("Archivo world_timestamps.npy inválido o no cargado.")
-
-    world_timestamps = np.asarray(world_timestamps).flatten()
-    if world_timestamps.size == 0:
-        raise ValueError("world_timestamps.npy está vacío.")
-
-    df_app = excel_app_df.copy()
-    gaze_df = gaze_df.copy()
-
-    def _first_available_column(frame: pd.DataFrame, candidates: list[str]) -> Optional[str]:
-        for candidate in candidates:
-            if candidate in frame.columns:
-                return candidate
-        return None
-
-    timestamp_col = _first_available_column(
-        gaze_df,
-        ["timestamp", "gaze_timestamp", "world_timestamp", "time", "ts"],
-    )
-    if timestamp_col is None:
-        raise ValueError(
-            "gaze_positions.csv debe incluir una columna de tiempo reconocida (timestamp)."
-        )
-
-    x_col = _first_available_column(
-        gaze_df,
-        ["norm_pos_x", "x", "gaze_x", "world_x", "px", "norm_pos_x [0]"]
-    )
-    y_col = _first_available_column(
-        gaze_df,
-        ["norm_pos_y", "y", "gaze_y", "world_y", "py", "norm_pos_y [1]"]
-    )
-    conf_col = _first_available_column(
-        gaze_df,
-        ["confidence", "gaze_confidence", "probability", "conf"],
-    )
-
-    normalized = pd.DataFrame()
-    normalized["timestamp"] = pd.to_numeric(
-        gaze_df[timestamp_col], errors="coerce"
-    )
-    normalized["norm_pos_x"] = (
-        pd.to_numeric(gaze_df[x_col], errors="coerce") if x_col else np.nan
-    )
-    normalized["norm_pos_y"] = (
-        pd.to_numeric(gaze_df[y_col], errors="coerce") if y_col else np.nan
-    )
-    if conf_col:
-        normalized["confidence"] = pd.to_numeric(
-            gaze_df[conf_col], errors="coerce"
-        ).fillna(0)
-    else:
-        normalized["confidence"] = 1.0
-
-    normalized = normalized.dropna(subset=["timestamp"]).copy()
-    normalized = normalized[normalized["confidence"] >= 0.6]
-    normalized = normalized.sort_values("timestamp").reset_index(drop=True)
-    normalized["dt"] = normalized["timestamp"].diff().clip(lower=0, upper=1)
-    normalized["dt"].fillna(0.016, inplace=True)
-    df_gaze_filtrado = normalized.copy()
-
-    rows_framewise: list[dict] = []
-    rows_pantalla: list[dict] = []
-    rows_integracion: list[dict] = []
+def _normalize_aoi_block(raw_value, row_number: int) -> dict[str, dict[str, float]]:
+    if raw_value is None or (isinstance(raw_value, float) and np.isnan(raw_value)):
+        return {}
+    try:
+        parsed = json.loads(raw_value) if isinstance(raw_value, str) else raw_value
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, dict) or not parsed:
+        return {}
 
     def _normalize_bounds(bounds) -> Optional[dict[str, float]]:
         if isinstance(bounds, dict):
@@ -2496,239 +2425,314 @@ def procesar_integracion_app_pupil(
             }
         return None
 
-    def _parse_aois(raw_value, row_number: int) -> dict:
-        if raw_value is None or (isinstance(raw_value, float) and np.isnan(raw_value)):
-            raise ValueError(f"Fila {row_number}: no hay AOIs definidos.")
-        try:
-            parsed = json.loads(raw_value) if isinstance(raw_value, str) else raw_value
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"Fila {row_number}: AOIs con formato inválido ({exc}).")
-        if not isinstance(parsed, dict) or not parsed:
-            raise ValueError(f"Fila {row_number}: AOIs vacíos.")
-        cleaned: dict[str, dict] = {}
-        treat_as_flat = all(_normalize_bounds(bounds) for bounds in parsed.values())
-        if treat_as_flat:
-            block_entries: dict = {}
-            for nombre, bounds in parsed.items():
-                normalized = _normalize_bounds(bounds)
-                if not normalized:
-                    continue
-                block_entries[str(nombre)] = normalized
-            if not block_entries:
-                raise ValueError(
-                    f"Fila {row_number}: no se pudo leer ninguna AOI válida."
-                )
+    cleaned: dict[str, dict[str, float]] = {}
+    treat_as_flat = all(_normalize_bounds(bounds) for bounds in parsed.values())
+    if treat_as_flat:
+        block_entries: dict[str, dict[str, float]] = {}
+        for name, bounds in parsed.items():
+            normalized = _normalize_bounds(bounds)
+            if normalized:
+                block_entries[str(name)] = normalized
+        if block_entries:
             cleaned["default"] = block_entries
-            return cleaned
-
-        for block_name, block_data in parsed.items():
-            if not isinstance(block_data, dict):
-                continue
-            normalized_block: dict[str, dict] = {}
-            for nombre, bounds in block_data.items():
-                normalized = _normalize_bounds(bounds)
-                if not normalized:
-                    raise ValueError(
-                        f"Fila {row_number}: AOI '{nombre}' no tiene límites numéricos válidos."
-                    )
-                normalized_block[str(nombre)] = normalized
-            if normalized_block:
-                cleaned[str(block_name)] = normalized_block
-        if not cleaned:
-            raise ValueError(f"Fila {row_number}: no se pudo leer ninguna AOI válida.")
         return cleaned
 
-    def _timestamp_from_frame(frame_value, total_frames: int, label: str, row_number: int):
-        try:
-            frame_index = int(frame_value)
-        except (TypeError, ValueError):
-            raise ValueError(
-                f"Fila {row_number}: el valor de {label} no es un número de frame válido."
-            )
-        if frame_index < 0 or frame_index >= total_frames:
-            raise ValueError(
-                f"Fila {row_number}: el frame {label} ({frame_index}) está fuera de rango."
-            )
-        timestamp = world_timestamps[frame_index]
-        if not np.isfinite(timestamp):
-            raise ValueError(
-                f"Fila {row_number}: el timestamp asociado al frame {label} es inválido."
-            )
-        return float(timestamp)
+    for block_name, block_data in parsed.items():
+        if not isinstance(block_data, dict):
+            continue
+        normalized_block: dict[str, dict[str, float]] = {}
+        for aoi_name, bounds in block_data.items():
+            normalized = _normalize_bounds(bounds)
+            if normalized:
+                normalized_block[str(aoi_name)] = normalized
+        if normalized_block:
+            cleaned[str(block_name)] = normalized_block
+    return cleaned
 
-    def detectar_aoi(x_val: float, y_val: float, aois: dict) -> Optional[str]:
-        if x_val is None or y_val is None:
-            return None
-        for nombre, box in aois.items():
-            if (
-                box["x_min"] <= x_val <= box["x_max"]
-                and box["y_min"] <= y_val <= box["y_max"]
-            ):
-                return nombre
+
+def _point_inside_bounds(x: Optional[float], y: Optional[float], bounds: dict[str, float]) -> bool:
+    return (
+        x is not None
+        and y is not None
+        and bounds["x_min"] <= x <= bounds["x_max"]
+        and bounds["y_min"] <= y <= bounds["y_max"]
+    )
+
+
+def _find_first_column(frame: pd.DataFrame, candidates: list[str]) -> Optional[str]:
+    for candidate in candidates:
+        if candidate in frame.columns:
+            return candidate
+    return None
+
+
+def _prepare_gaze_dataframe(gaze_df: pd.DataFrame) -> pd.DataFrame:
+    timestamp_col = _find_first_column(
+        gaze_df, ["timestamp", "gaze_timestamp", "world_timestamp", "time", "ts"]
+    )
+    if timestamp_col is None:
+        raise ValueError(
+            "gaze_positions.csv debe incluir una columna de tiempo reconocida (timestamp)."
+        )
+
+    x_col = _find_first_column(
+        gaze_df, ["norm_pos_x", "x", "gaze_x", "world_x", "px", "norm_pos_x [0]"]
+    )
+    y_col = _find_first_column(
+        gaze_df, ["norm_pos_y", "y", "gaze_y", "world_y", "py", "norm_pos_y [1]"]
+    )
+    conf_col = _find_first_column(
+        gaze_df, ["confidence", "gaze_confidence", "probability", "conf"]
+    )
+
+    normalized = pd.DataFrame()
+    normalized["timestamp"] = pd.to_numeric(gaze_df[timestamp_col], errors="coerce")
+    normalized["norm_pos_x"] = (
+        pd.to_numeric(gaze_df[x_col], errors="coerce") if x_col else np.nan
+    )
+    normalized["norm_pos_y"] = (
+        pd.to_numeric(gaze_df[y_col], errors="coerce") if y_col else np.nan
+    )
+    if conf_col:
+        normalized["confidence"] = (
+            pd.to_numeric(gaze_df[conf_col], errors="coerce").fillna(0)
+        )
+    else:
+        normalized["confidence"] = 1.0
+
+    normalized = normalized.dropna(subset=["timestamp"]).copy()
+    normalized = normalized[normalized["confidence"] >= 0.6]
+    normalized = normalized.sort_values("timestamp").reset_index(drop=True)
+    normalized["dt"] = normalized["timestamp"].diff().clip(lower=0, upper=1)
+    normalized["dt"].fillna(0.016, inplace=True)
+    return normalized
+
+
+def _timestamp_from_frame(
+    frame_value: Any, total_frames: int, world_ts: np.ndarray
+) -> Optional[float]:
+    try:
+        frame_index = int(frame_value)
+    except (TypeError, ValueError):
         return None
+    if frame_index < 0 or frame_index >= total_frames:
+        return None
+    timestamp = world_ts[frame_index]
+    if not np.isfinite(timestamp):
+        return None
+    return float(timestamp)
 
-    total_frames = world_timestamps.shape[0]
 
-    for row_idx, fila in df_app.iterrows():
-        modo = str(fila.get("Modo", "")).strip() or "Desconocido"
-        producto_seleccionado = fila.get("Producto Seleccionado", "")
-        aois = _parse_aois(fila.get("AOIs"), row_idx + 1)
-        pantalla_id = str(fila.get("Pantalla_ID") or "").strip()
+def integrate_app_with_pupil(
+    excel_df,
+    gaze_df,
+    world_ts,
+    blink_df=None,
+):
+    world_array = np.asarray(world_ts).flatten()
+    if world_array.size == 0:
+        raise ValueError("Archivo world_timestamps.npy vacío o inválido.")
+
+    gaze_clean = _prepare_gaze_dataframe(gaze_df)
+    total_frames = world_array.shape[0]
+
+    framewise_rows: list[dict[str, Any]] = []
+    per_screen_rows: list[dict[str, Any]] = []
+    screen_intervals: list[tuple[str, float, float]] = []
+
+    for idx, row in excel_df.iterrows():
+        mode = str(row.get("Modo", "")).strip() or "Desconocido"
+        pantalla_id = str(row.get("Pantalla_ID") or "").strip()
         if not pantalla_id:
-            raise ValueError(
-                f"Fila {row_idx + 1}: falta el identificador único de pantalla (Pantalla_ID)."
-            )
-        if pantalla_id not in aois:
-            available = ", ".join(sorted(aois.keys()))
-            raise ValueError(
-                f"Fila {row_idx + 1}: Pantalla_ID '{pantalla_id}' no coincide con los AOIs disponibles ({available})."
-            )
-        block_aois = aois.get(pantalla_id, {})
+            continue
+
+        aois_by_screen = _normalize_aoi_block(row.get("AOIs"), idx + 1)
+        block_aois = aois_by_screen.get(pantalla_id) or {}
         if not block_aois:
-            raise ValueError(
-                f"Fila {row_idx + 1}: la pantalla '{pantalla_id}' no contiene AOIs definidos."
-            )
+            continue
 
-        frame_inicio = fila.get("Frame_inicio")
-        frame_fin = fila.get("Frame_fin")
-        t_start = _timestamp_from_frame(frame_inicio, total_frames, "inicio", row_idx + 1)
-        t_end = _timestamp_from_frame(frame_fin, total_frames, "fin", row_idx + 1)
-        if t_end < t_start:
-            raise ValueError(
-                f"Fila {row_idx + 1}: timestamps imposibles (fin menor que inicio)."
-            )
+        t_start = _timestamp_from_frame(row.get("Frame_inicio"), total_frames, world_array)
+        t_end = _timestamp_from_frame(row.get("Frame_fin"), total_frames, world_array)
+        if t_start is None or t_end is None or t_end < t_start:
+            continue
 
-        gaze_seg = df_gaze_filtrado[
-            (df_gaze_filtrado["timestamp"] >= t_start)
-            & (df_gaze_filtrado["timestamp"] <= t_end)
+        screen_duration = float(t_end - t_start)
+        screen_intervals.append((mode, t_start, t_end))
+
+        segment = gaze_clean[
+            (gaze_clean["timestamp"] >= t_start)
+            & (gaze_clean["timestamp"] <= t_end)
         ].copy()
 
-        segment_rows: list[dict] = []
-        for _, gaze_point in gaze_seg.iterrows():
-            aoi_name = detectar_aoi(
-                gaze_point.get("norm_pos_x"),
-                gaze_point.get("norm_pos_y"),
-                block_aois,
-            )
-            record = {
-                "timestamp": gaze_point["timestamp"],
-                "x": gaze_point.get("norm_pos_x"),
-                "y": gaze_point.get("norm_pos_y"),
-                "dt": gaze_point.get("dt", 0.0),
-                "AOI": aoi_name,
-                "Modo": modo,
-                "Producto_Seleccionado": producto_seleccionado,
-                "Pantalla_ID": pantalla_id,
-                "Pantalla": fila.get("Pantalla", ""),
-            }
-            segment_rows.append(record)
-            rows_framewise.append(record)
-
-        segment_df = pd.DataFrame(segment_rows)
-
-        for aoi_name in block_aois.keys():
-            if segment_df.empty:
-                dwell_time = 0.0
-                fixaciones = 0
-                primera_mirada = np.nan
-            else:
-                mask = segment_df["AOI"] == aoi_name
-                dwell_time = float(segment_df.loc[mask, "dt"].sum())
-                fixaciones = int(mask.sum())
-                primera_mirada = (
-                    float(segment_df.loc[mask, "timestamp"].min())
-                    if mask.any()
-                    else np.nan
-                )
-            if "_" in aoi_name:
-                producto, componente = aoi_name.rsplit("_", 1)
-            else:
-                producto, componente = aoi_name, ""
-            metric_row = {
-                "Modo": modo,
-                "Pantalla_ID": pantalla_id,
-                "Pantalla": fila.get("Pantalla", ""),
-                "Producto": producto,
-                "Componente": componente,
-                "Dwell_Time": dwell_time,
-                "Fixaciones": fixaciones,
-                "Primera_Mirada": primera_mirada,
-                "Frame_inicio": frame_inicio,
-                "Frame_fin": frame_fin,
-            }
-            rows_pantalla.append(metric_row)
-            rows_integracion.append(
-                metric_row
-                | {
-                    "Producto_Seleccionado": producto_seleccionado,
+        for _, gaze_point in segment.iterrows():
+            aoi_hit = None
+            for aoi_name, bounds in block_aois.items():
+                if _point_inside_bounds(
+                    gaze_point.get("norm_pos_x"),
+                    gaze_point.get("norm_pos_y"),
+                    bounds,
+                ):
+                    aoi_hit = aoi_name
+                    break
+            framewise_rows.append(
+                {
+                    "timestamp": gaze_point["timestamp"],
+                    "norm_pos_x": gaze_point.get("norm_pos_x"),
+                    "norm_pos_y": gaze_point.get("norm_pos_y"),
+                    "dt": gaze_point.get("dt", 0.0),
+                    "AOI": aoi_hit,
+                    "Modo": mode,
+                    "Pantalla_ID": pantalla_id,
+                    "Pantalla": row.get("Pantalla", ""),
+                    "Producto_Seleccionado": row.get("Producto Seleccionado", ""),
                 }
             )
 
-    df_aoi_framewise = pd.DataFrame(rows_framewise)
-    pantalla_cols = [
-        "Modo",
-        "Pantalla_ID",
-        "Pantalla",
-        "Producto",
-        "Componente",
-        "Dwell_Time",
-        "Fixaciones",
-        "Primera_Mirada",
-        "Frame_inicio",
-        "Frame_fin",
-    ]
-    df_por_pantalla = (
-        pd.DataFrame(rows_pantalla).reindex(columns=pantalla_cols)
-        if rows_pantalla
-        else pd.DataFrame(columns=pantalla_cols)
+        for aoi_name, bounds in block_aois.items():
+            mask = segment.apply(
+                lambda p: _point_inside_bounds(
+                    p.get("norm_pos_x"), p.get("norm_pos_y"), bounds
+                ),
+                axis=1,
+            ) if not segment.empty else pd.Series(dtype=bool)
+
+            dwell_time = float(segment.loc[mask, "dt"].sum()) if not segment.empty else 0.0
+            fixations = int(mask.sum()) if not segment.empty else 0
+            tff = (
+                float(segment.loc[mask, "timestamp"].min())
+                if not segment.empty and mask.any()
+                else np.nan
+            )
+            product, component = (
+                aoi_name.split("_", 1) + [""] if "_" in aoi_name else [aoi_name, ""]
+            )[:2]
+            per_screen_rows.append(
+                {
+                    "Modo": mode,
+                    "Pantalla_ID": pantalla_id,
+                    "Pantalla": row.get("Pantalla", ""),
+                    "AOI": aoi_name,
+                    "Producto": product,
+                    "Componente": component,
+                    "Dwell_Time": dwell_time,
+                    "Fixaciones": fixations,
+                    "TFF": tff,
+                    "Segment_Duration": screen_duration,
+                    "Frame_inicio": row.get("Frame_inicio"),
+                    "Frame_fin": row.get("Frame_fin"),
+                }
+            )
+
+    df_framewise = (
+        pd.DataFrame(framewise_rows)
+        .sort_values("timestamp")
+        .reset_index(drop=True)
     )
-    modo_cols = ["Modo", "Producto", "Componente", "Dwell_Time", "Fixaciones", "Primera_Mirada"]
-    if not df_por_pantalla.empty:
-        df_por_modo = (
-            df_por_pantalla.groupby(["Modo", "Producto", "Componente"], as_index=False)
+    df_per_screen = (
+        pd.DataFrame(per_screen_rows)
+        .sort_values(["Modo", "Pantalla_ID", "AOI"])
+        .reset_index(drop=True)
+    )
+
+    if not df_per_screen.empty:
+        df_per_mode = (
+            df_per_screen.groupby("Modo", as_index=False)
             .agg(
                 {
                     "Dwell_Time": "sum",
                     "Fixaciones": "sum",
-                    "Primera_Mirada": "min",
+                    "TFF": "min",
+                    "Segment_Duration": "sum",
                 }
             )
-            .reindex(columns=modo_cols)
+            .rename(columns={"Segment_Duration": "Total_Duration"})
+            .sort_values("Modo")
+            .reset_index(drop=True)
         )
     else:
-        df_por_modo = pd.DataFrame(columns=modo_cols)
-    integracion_cols = pantalla_cols + ["Producto_Seleccionado"]
-    df_integracion_completa = (
-        pd.DataFrame(rows_integracion).reindex(columns=integracion_cols)
-        if rows_integracion
-        else pd.DataFrame(columns=integracion_cols)
-    )
+        df_per_mode = pd.DataFrame(
+            columns=["Modo", "Dwell_Time", "Fixaciones", "TFF", "Total_Duration"]
+        )
+
+    blink_results = pd.DataFrame()
+    if blink_df is not None:
+        blink_start_col = _find_first_column(
+            blink_df,
+            [
+                "start_timestamp",
+                "start_time",
+                "start",
+                "t_start",
+                "timestamp_start",
+            ],
+        )
+        blink_end_col = _find_first_column(
+            blink_df,
+            ["end_timestamp", "end_time", "end", "t_end", "timestamp_end"],
+        )
+        if blink_start_col and blink_end_col:
+            blinks = blink_df[[blink_start_col, blink_end_col]].copy()
+            blinks.columns = ["start", "end"]
+            blinks = blinks.dropna()
+            per_mode_counts: list[dict[str, Any]] = []
+            for mode, start_ts, end_ts in screen_intervals:
+                duration = max(0.0, end_ts - start_ts)
+                overlap_count = 0
+                for _, blink in blinks.iterrows():
+                    blink_start = float(blink["start"])
+                    blink_end = float(blink["end"])
+                    overlap_start = max(start_ts, blink_start)
+                    overlap_end = min(end_ts, blink_end)
+                    if overlap_end > overlap_start:
+                        overlap_count += 1
+                per_mode_counts.append(
+                    {
+                        "Modo": mode,
+                        "Blinks": overlap_count,
+                        "Duration": duration,
+                    }
+                )
+            blink_results = pd.DataFrame(per_mode_counts)
+            if not blink_results.empty:
+                blink_results = (
+                    blink_results.groupby("Modo", as_index=False)
+                    .agg({"Blinks": "sum", "Duration": "sum"})
+                    .assign(
+                        Blink_Rate_Hz=lambda df: df.apply(
+                            lambda r: r["Blinks"] / r["Duration"]
+                            if r["Duration"] > 0
+                            else np.nan,
+                            axis=1,
+                        )
+                    )
+                    .sort_values("Modo")
+                    .reset_index(drop=True)
+                )
 
     return {
-        "df_app": df_app,
-        "df_gaze": df_gaze_filtrado,
-        "df_aoi_framewise": df_aoi_framewise,
-        "df_por_pantalla": df_por_pantalla,
-        "df_por_modo": df_por_modo,
-        "df_integracion_completa": df_integracion_completa,
+        "framewise_gaze": df_framewise,
+        "per_screen": df_per_screen,
+        "per_mode": df_per_mode,
+        "blinks_per_mode": blink_results,
     }
 
 
-def exportar_excel_final(result_dict: dict) -> bytes:
-    """Create the Excel workbook required by the admin dashboard."""
-
+def export_final_excel(results_dict) -> bytes:
     buffer = BytesIO()
+    sheet_order = [
+        ("Resumen_App", results_dict.get("excel_resumen")),
+        ("Gaze_Framewise", results_dict.get("framewise_gaze")),
+        ("AOI_Por_Pantalla", results_dict.get("per_screen")),
+        ("AOI_Por_Modo", results_dict.get("per_mode")),
+    ]
+
+    if isinstance(results_dict.get("blinks_per_mode"), pd.DataFrame):
+        sheet_order.append(("Blinks_Por_Modo", results_dict.get("blinks_per_mode")))
+    if isinstance(results_dict.get("pupil_raw"), pd.DataFrame):
+        sheet_order.append(("Pupil_Raw", results_dict.get("pupil_raw")))
+
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        sheet_map = [
-            ("Resumen_App", "df_app"),
-            ("Gaze_Raw_Usado", "df_gaze"),
-            ("AOI_Framewise", "df_aoi_framewise"),
-            ("Analisis_Por_Pantalla", "df_por_pantalla"),
-            ("Analisis_Por_Modo", "df_por_modo"),
-            ("Integracion_Completa", "df_integracion_completa"),
-        ]
-        for sheet_name, key in sheet_map:
-            df_value = result_dict.get(key)
+        for sheet_name, df_value in sheet_order:
             if isinstance(df_value, pd.DataFrame) and not df_value.empty:
                 df_value.to_excel(writer, sheet_name=sheet_name, index=False)
             else:
@@ -3656,6 +3660,9 @@ with tab_admin:
     st.session_state.setdefault("analysis_app_excel", None)
     st.session_state.setdefault("analysis_gaze", None)
     st.session_state.setdefault("analysis_timestamps", None)
+    st.session_state.setdefault("analysis_blinks", None)
+    st.session_state.setdefault("analysis_pupil", None)
+    st.session_state.setdefault("analysis_exportinfo", None)
     st.session_state.setdefault("analysis_video", None)
     st.session_state.setdefault("analysis_result", None)
 
@@ -3674,6 +3681,46 @@ with tab_admin:
                 st.error("Contraseña incorrecta. Intenta nuevamente.")
         st.stop()
 
+    def _render_upload(key: str, label: str, types: list[str], optional: bool = False):
+        uploaded = st.file_uploader(label, type=types, key=f"uploader_{key}")
+        if uploaded is not None:
+            st.session_state[key] = uploaded.getvalue()
+        if st.session_state.get(key):
+            st.success("Archivo cargado correctamente.")
+        else:
+            status = "(opcional)" if optional else "(obligatorio)"
+            st.caption(f":gray[Archivo no cargado aún {status}]")
+
+    st.subheader("📂 Carga de archivos – App + Pupil Labs")
+    st.caption(
+        "Carga primero los archivos obligatorios. La carga no ejecuta análisis hasta que presiones el botón correspondiente."
+    )
+
+    mandatory_cols = st.columns(3)
+    with mandatory_cols[0]:
+        _render_upload(
+            "analysis_app_excel",
+            "Excel de la app (hoja 'Resumen')",
+            ["xlsx"],
+        )
+    with mandatory_cols[1]:
+        _render_upload("analysis_gaze", "gaze_positions.csv", ["csv"])
+    with mandatory_cols[2]:
+        _render_upload("analysis_timestamps", "world_timestamps.npy", ["npy"])
+
+    optional_cols = st.columns(3)
+    with optional_cols[0]:
+        _render_upload("analysis_blinks", "blink_detection_report.csv (opcional)", ["csv"], True)
+    with optional_cols[1]:
+        _render_upload("analysis_pupil", "pupil_positions.csv (opcional)", ["csv"], True)
+    with optional_cols[2]:
+        _render_upload("analysis_exportinfo", "export_info.csv (opcional)", ["csv"], True)
+
+    video_col = st.columns(1)[0]
+    with video_col:
+        _render_upload("analysis_video", "world.mp4 (opcional)", ["mp4"], True)
+
+    st.divider()
     st.caption("Asignación automática de grupos experimentales equilibrados.")
     st.subheader("Asignación automática de grupos experimentales")
 
@@ -3694,69 +3741,19 @@ with tab_admin:
         "Combina los datos generados por la app del experimento visual con los archivos esenciales de Pupil Labs."
     )
 
-    col_excel, col_gaze = st.columns(2)
-    with col_excel:
-        excel_upload = st.file_uploader(
-            "Excel de la app (hoja 'Resumen')",
-            type=["xlsx"],
-            key="analysis_excel_uploader",
-        )
-        if excel_upload is not None:
-            st.session_state["analysis_app_excel"] = excel_upload.getvalue()
-            st.success("Excel cargado correctamente.")
-        elif st.session_state.get("analysis_app_excel"):
-            st.info("Excel listo para analizar.")
-    with col_gaze:
-        gaze_upload = st.file_uploader(
-            "gaze_positions.csv",
-            type=["csv"],
-            key="analysis_gaze_uploader",
-        )
-        if gaze_upload is not None:
-            st.session_state["analysis_gaze"] = gaze_upload.getvalue()
-            st.success("Gaze positions cargado.")
-        elif st.session_state.get("analysis_gaze"):
-            st.info("Archivo gaze_positions listo.")
-
-    col_ts, col_video = st.columns(2)
-    with col_ts:
-        timestamps_upload = st.file_uploader(
-            "world_timestamps.npy",
-            type=["npy"],
-            key="analysis_timestamps_uploader",
-        )
-        if timestamps_upload is not None:
-            st.session_state["analysis_timestamps"] = timestamps_upload.getvalue()
-            st.success("Timestamps cargados.")
-        elif st.session_state.get("analysis_timestamps"):
-            st.info("Archivo world_timestamps listo.")
-    with col_video:
-        video_upload = st.file_uploader(
-            "world.mp4 (opcional)",
-            type=["mp4"],
-            key="analysis_video_uploader",
-        )
-        if video_upload is not None:
-            st.session_state["analysis_video"] = video_upload.getvalue()
-            st.success("Video cargado.")
-        elif st.session_state.get("analysis_video"):
-            st.info("Video listo para mostrar.")
-
     if st.button("🚀 Ejecutar análisis del participante"):
-        archivos_obligatorios = {
-            "analysis_app_excel": "Excel del experimento",
-            "analysis_gaze": "gaze_positions.csv",
-            "analysis_timestamps": "world_timestamps.npy",
-        }
-        faltantes = [
-            nombre
-            for clave, nombre in archivos_obligatorios.items()
-            if not st.session_state.get(clave)
+        missing = [
+            label
+            for key, label in [
+                ("analysis_app_excel", "Excel del experimento"),
+                ("analysis_gaze", "gaze_positions.csv"),
+                ("analysis_timestamps", "world_timestamps.npy"),
+            ]
+            if not st.session_state.get(key)
         ]
-        if faltantes:
+        if missing:
             st.error(
-                "Faltan archivos obligatorios para procesar: "
-                + ", ".join(faltantes)
+                "Faltan archivos obligatorios para procesar: " + ", ".join(missing)
             )
         else:
             try:
@@ -3765,92 +3762,108 @@ with tab_admin:
                     sheet_name="Resumen",
                 )
                 gaze_df = pd.read_csv(BytesIO(st.session_state["analysis_gaze"]))
-                world_timestamps = np.load(
+                world_ts = np.load(
                     BytesIO(st.session_state["analysis_timestamps"]),
                     allow_pickle=False,
                 )
-                st.session_state["analysis_result"] = procesar_integracion_app_pupil(
-                    excel_df, gaze_df, world_timestamps
+
+                blink_df = (
+                    pd.read_csv(BytesIO(st.session_state["analysis_blinks"]))
+                    if st.session_state.get("analysis_blinks")
+                    else None
                 )
+                pupil_df = (
+                    pd.read_csv(BytesIO(st.session_state["analysis_pupil"]))
+                    if st.session_state.get("analysis_pupil")
+                    else None
+                )
+
+                results = integrate_app_with_pupil(
+                    excel_df=excel_df,
+                    gaze_df=gaze_df,
+                    world_ts=world_ts,
+                    blink_df=blink_df,
+                )
+                results["excel_resumen"] = excel_df
+                if pupil_df is not None:
+                    results["pupil_raw"] = pupil_df
+
+                st.session_state["analysis_result"] = results
                 st.success("Análisis completado. Revisa los resultados debajo.")
             except Exception as error:
                 st.error(f"No se pudo procesar el análisis: {error}")
 
     analysis_result = st.session_state.get("analysis_result")
     if analysis_result:
-        participant_id = _sanitize_participant_id(analysis_result.get("df_app", pd.DataFrame()))
-        excel_final = exportar_excel_final(analysis_result)
+        st.markdown("### 📈 Visualizaciones y métricas")
+
+        framewise = analysis_result.get("framewise_gaze", pd.DataFrame())
+        per_screen = analysis_result.get("per_screen", pd.DataFrame())
+        per_mode = analysis_result.get("per_mode", pd.DataFrame())
+        blinks_mode = analysis_result.get("blinks_per_mode", pd.DataFrame())
+
+        st.markdown("#### 🔥 Heatmap simple")
+        heatmap_df = framewise.dropna(subset=["norm_pos_x", "norm_pos_y"]).copy()
+        if not heatmap_df.empty:
+            st.scatter_chart(heatmap_df, x="norm_pos_x", y="norm_pos_y")
+        else:
+            st.caption(":gray[Sin muestras de gaze para graficar.]")
+
+        st.markdown("#### 🛍️ Atención por producto (AOI por pantalla)")
+        if not per_screen.empty:
+            dwell_product = (
+                per_screen.groupby("Producto", as_index=False)["Dwell_Time"].sum()
+            )
+            fix_product = (
+                per_screen.groupby("Producto", as_index=False)["Fixaciones"].sum()
+            )
+            cols = st.columns(2)
+            with cols[0]:
+                st.caption("Tiempo de observación por producto")
+                st.bar_chart(dwell_product.set_index("Producto"))
+            with cols[1]:
+                st.caption("Fijaciones por producto")
+                st.bar_chart(fix_product.set_index("Producto"))
+            st.dataframe(per_screen)
+        else:
+            st.caption(":gray[Sin métricas por pantalla disponibles.]")
+
+        st.markdown("#### 🧭 Atención por modo")
+        if not per_mode.empty:
+            col_mode = st.columns(3)
+            with col_mode[0]:
+                st.caption("Dwell time total por modo")
+                st.bar_chart(per_mode.set_index("Modo")["Dwell_Time"])
+            with col_mode[1]:
+                st.caption("Fijaciones por modo")
+                st.bar_chart(per_mode.set_index("Modo")["Fixaciones"])
+            with col_mode[2]:
+                st.caption("Tiempo a primera fijación (TFF)")
+                st.bar_chart(per_mode.set_index("Modo")["TFF"])
+            st.dataframe(per_mode)
+        else:
+            st.caption(":gray[Sin métricas por modo disponibles.]")
+
+        st.markdown("#### 👀 Tasa de parpadeo por modo")
+        if isinstance(blinks_mode, pd.DataFrame) and not blinks_mode.empty:
+            st.dataframe(blinks_mode)
+            st.bar_chart(blinks_mode.set_index("Modo")["Blink_Rate_Hz"])
+        else:
+            st.caption(":gray[No se cargó archivo de parpadeos o no se detectaron eventos.]")
+
+        if st.session_state.get("analysis_video"):
+            st.markdown("#### 🎬 Vista previa de world.mp4")
+            st.video(st.session_state["analysis_video"])
+
+        st.markdown("### 💾 Exportar resultados")
+        participant_id = _sanitize_participant_id(
+            analysis_result.get("excel_resumen", pd.DataFrame())
+        )
+        excel_final = export_final_excel(analysis_result)
         st.download_button(
             "📥 Descargar Excel Final del Participante",
             data=excel_final,
-            file_name=f"Analisis_Participante_{participant_id}.xlsx",
+            file_name=f"Analisis_Participante_{participant_id or 'sin_id'}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key="analysis_download_button",
         )
-
-        df_integracion = analysis_result.get(
-            "df_integracion_completa", pd.DataFrame()
-        )
-        df_analisis_pantalla = analysis_result.get(
-            "df_por_pantalla", pd.DataFrame()
-        )
-        df_analisis_modo = analysis_result.get("df_por_modo", pd.DataFrame())
-        df_gaze_filtrado = analysis_result.get("df_gaze", pd.DataFrame())
-
-        if not df_integracion.empty:
-            tiempo_total = (
-                df_integracion.groupby("Producto", as_index=False)["Dwell_Time"].sum()
-            )
-            fijaciones_total = (
-                df_integracion.groupby("Producto", as_index=False)["Fixaciones"].sum()
-            )
-
-            st.markdown("#### Tablas de atención por producto")
-            col_time, col_fix = st.columns(2)
-            with col_time:
-                st.markdown("**Tiempo total por producto**")
-                st.dataframe(tiempo_total)
-            with col_fix:
-                st.markdown("**Fijaciones por producto**")
-                st.dataframe(fijaciones_total)
-
-            st.markdown("#### Distribución de dwell-time")
-            if not tiempo_total.empty:
-                chart_data = tiempo_total.set_index("Producto")
-                st.bar_chart(chart_data)
-
-            st.markdown("#### Resumen de participación")
-            productos_vistos = ", ".join(
-                sorted(filter(None, df_integracion["Producto"].dropna().unique()))
-            )
-            modos_completados = ", ".join(
-                sorted(filter(None, df_integracion["Modo"].dropna().unique()))
-            )
-            total_dwell = df_integracion["Dwell_Time"].sum()
-            st.markdown(
-                f"- **Productos vistos:** {productos_vistos or 'Sin registros'}\n"
-                f"- **Modos completados:** {modos_completados or 'Sin registros'}\n"
-                f"- **Dwell-time acumulado:** {total_dwell:.2f} segundos"
-            )
-
-        if isinstance(df_analisis_pantalla, pd.DataFrame) and not df_analisis_pantalla.empty:
-            st.markdown("#### Análisis detallado por pantalla")
-            st.dataframe(df_analisis_pantalla)
-
-        if isinstance(df_analisis_modo, pd.DataFrame) and not df_analisis_modo.empty:
-            st.markdown("#### Análisis consolidado por modo")
-            st.dataframe(df_analisis_modo)
-
-        if isinstance(df_gaze_filtrado, pd.DataFrame) and not df_gaze_filtrado.empty:
-            heatmap_df = df_gaze_filtrado.dropna(subset=["norm_pos_x", "norm_pos_y"]).copy()
-            if not heatmap_df.empty:
-                heatmap_df = heatmap_df.rename(
-                    columns={"norm_pos_x": "X", "norm_pos_y": "Y", "dt": "Duracion"}
-                )
-                st.markdown("#### Heatmap (puntos) del recorrido visual")
-                st.caption("Cada punto representa una muestra válida de gaze dentro del rango analizado.")
-                st.scatter_chart(heatmap_df, x="X", y="Y")
-
-        if st.session_state.get("analysis_video"):
-            st.markdown("#### Preview de world.mp4")
-            st.video(st.session_state["analysis_video"])
