@@ -1397,12 +1397,31 @@ def obtener_aoi_layout(
 
     elif modo == "Sequential":
         if normalized:
-            nombre, recomendado = normalized[0]
-            _add_coords(nombre, "pack", [0.20, 0.00, 0.80, 0.70])
-            _add_coords(nombre, "claim", [0.80, 0.00, 1.00, 1.00])
-            _add_coords(nombre, "nutri", [0.00, 0.00, 0.20, 1.00])
-            if mostrar_smartcore and recomendado:
-                _add_coords(nombre, "smartcore", [0.40, 0.80, 0.60, 0.95])
+            pantalla_label = str(pantalla_id) if pantalla_id else "Sequential-1"
+            producto_layout: dict[str, list[float]] = {}
+
+            def _add_seq_coords(suffix: str, coords: list[float]) -> None:
+                if not coords or len(coords) != 4:
+                    return
+                try:
+                    producto_layout[suffix] = [float(value) for value in coords]
+                except (TypeError, ValueError):
+                    return
+
+            for nombre, recomendado in normalized:
+                if producto_layout:
+                    break
+                producto_nombre = nombre
+                _add_seq_coords(f"{producto_nombre}_pack", [0.20, 0.00, 0.80, 0.70])
+                _add_seq_coords(f"{producto_nombre}_claim", [0.80, 0.00, 1.00, 1.00])
+                _add_seq_coords(f"{producto_nombre}_nutri", [0.00, 0.00, 0.20, 1.00])
+                if mostrar_smartcore and recomendado:
+                    _add_seq_coords(
+                        f"{producto_nombre}_smartcore", [0.40, 0.80, 0.60, 0.95]
+                    )
+
+            if producto_layout:
+                layout = {pantalla_label: producto_layout}
 
     return layout
 
