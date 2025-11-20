@@ -1781,11 +1781,6 @@ def _build_experiment_results(
 
     product_name_cache: dict[str, str] = {}
 
-    producto_top_entry = _select_highest_smartscore_from_names(
-        list(smartscore_map.keys()), smartscore_map
-    )
-    producto_top = producto_top_entry[0] if producto_top_entry else None
-
     def _resolve_display_name(product: str) -> str:
         if not product:
             return ""
@@ -1837,6 +1832,14 @@ def _build_experiment_results(
             else None,
             "Duración total experimento (s)": experiment_duration,
         }
+
+        (
+            producto_top,
+            producto_top_stem,
+            producto_top_score,
+        ) = _get_mode_recommended_product(state, smartscore_map)
+        sessions[mode] = state
+        st.session_state["mode_sessions"] = sessions
         # =======================================
         # NUEVAS COLUMNAS PARA MODO A/B (compacto)
         # =======================================
@@ -1997,19 +2000,16 @@ def _build_experiment_results(
             if selection_duration_value is None and isinstance(screen_start, datetime) and isinstance(screen_end, datetime):
                 selection_duration_value = (screen_end - screen_start).total_seconds()
 
-            recommended_entry = _select_highest_smartscore_from_names(
-                screen_products, smartscore_map
-            )
-            recommended_display = None
-            recommended_score = None
-            if recommended_entry:
-                recommended_display, recommended_score = recommended_entry
-            elif mode == "Sequential" and screen_products:
+            recommended_display = producto_top
+            recommended_score = producto_top_score
+            recommended_stem = producto_top_stem
+            if recommended_display is None and mode == "Sequential" and screen_products:
                 recommended_display = _resolve_display_name(screen_products[0])
 
-            producto_top_visible = (
-                producto_top if producto_top in display_products else None
+            recommended_visible = bool(
+                recommended_stem and recommended_stem in screen_products
             )
+            producto_top_visible = recommended_display if recommended_visible else None
 
             productos_visibles = [
                 {
@@ -2085,7 +2085,7 @@ def _build_experiment_results(
 
             smartscore_nombre_rec = recommended_display or ""
             smartscore_valor_rec = recommended_score
-            if recommended_display and (recommended_entry is None) and screen_products:
+            if not smartscore_nombre_rec and screen_products:
                 entry_rec = _find_smartscore_for_image(screen_products[0], smartscore_map)
                 if entry_rec:
                     smartscore_nombre_rec, smartscore_valor_rec = entry_rec
@@ -2199,6 +2199,35 @@ def _select_highest_smartscore_product(
             best_entry = entry
             best_score = score_value
     return best_entry
+
+
+def _get_mode_recommended_product(
+    mode_state: dict, smartscore_map: dict[str, float]
+) -> tuple[Optional[str], Optional[str], Optional[float]]:
+    cached_display = mode_state.get("mode_recommended_display")
+    cached_stem = mode_state.get("mode_recommended_stem")
+    cached_score = mode_state.get("mode_recommended_score")
+
+    if cached_display and cached_stem and isinstance(cached_score, (int, float)):
+        return cached_display, cached_stem, float(cached_score)
+
+    images: list[Path] = mode_state.get("images", []) or []
+    best_entry = _select_highest_smartscore_product(images, smartscore_map)
+    if not best_entry:
+        return None, None, None
+
+    best_display, best_score = best_entry
+    best_stem: Optional[str] = None
+    for image_path in images:
+        entry = _find_smartscore_for_image(image_path.stem, smartscore_map)
+        if entry and entry[0] == best_display:
+            best_stem = image_path.stem
+            break
+
+    mode_state["mode_recommended_display"] = best_display
+    mode_state["mode_recommended_stem"] = best_stem
+    mode_state["mode_recommended_score"] = best_score
+    return best_display, best_stem, best_score
 
 
 def _select_highest_smartscore_from_names(
@@ -3164,6 +3193,13 @@ with tab2:
 
         images = current_state.get("images", [])
         smartscore_map = st.session_state.get("tab2_smartscore_map", {})
+        (
+            recommended_display,
+            recommended_stem,
+            recommended_score,
+        ) = _get_mode_recommended_product(current_state, smartscore_map)
+        mode_sessions[current_mode] = current_state
+        st.session_state["mode_sessions"] = mode_sessions
 
         info_message = t(
             "tab2_mode_info",
@@ -3234,10 +3270,13 @@ with tab2:
                         for image_index in display_indexes
                         if 0 <= image_index < len(images)
                     ]
-                    best_entry = _select_highest_smartscore_product(
-                        visible_paths, smartscore_map
+                    recommended_in_view = any(
+                        image_path.stem == recommended_stem
+                        for image_path in visible_paths
                     )
-                    highlighted_product = best_entry[0] if best_entry else None
+                    highlighted_product = (
+                        recommended_display if recommended_in_view else None
+                    )
                     current_state["ab_highlighted_product"] = highlighted_product
                     mode_sessions[current_mode] = current_state
                     st.session_state["mode_sessions"] = mode_sessions
@@ -3272,20 +3311,15 @@ with tab2:
                 if len(images) < 2:
                     st.warning(t("tab2_need_two_images_grid"))
                 else:
-                    grid_best = _select_highest_smartscore_product(
-                        images, smartscore_map
-                    )
-                    highlighted_product = grid_best[0] if grid_best else None
+                    highlighted_product = None
+                    if recommended_stem:
+                        for image_path in images:
+                            if image_path.stem == recommended_stem:
+                                highlighted_product = recommended_display
+                                break
                     current_state["producto_recomendado"] = highlighted_product
                     mode_sessions[current_mode] = current_state
                     st.session_state["mode_sessions"] = mode_sessions
-                    if (
-                        current_state.get("producto_recomendado")
-                        != highlighted_product
-                    ):
-                        current_state["producto_recomendado"] = highlighted_product
-                        mode_sessions[current_mode] = current_state
-                        st.session_state["mode_sessions"] = mode_sessions
                     for start in range(0, len(images), 2):
                         columns = st.columns(2)
                         for offset, (col, image_path) in enumerate(
@@ -3316,11 +3350,10 @@ with tab2:
                     st.session_state["mode_sessions"] = mode_sessions
 
                 current_image = images[index]
-                seq_entry = _find_smartscore_for_image(
-                    current_image.stem, smartscore_map
-                )
-                highlighted_product = seq_entry[0] if seq_entry else None
-                current_state["producto_recomendado"] = current_image.stem
+                highlighted_product = None
+                if recommended_stem and current_image.stem == recommended_stem:
+                    highlighted_product = recommended_display
+                current_state["producto_recomendado"] = highlighted_product
                 current_state = _ensure_seq_view_state(current_state, current_image)
                 mode_sessions[current_mode] = current_state
                 st.session_state["mode_sessions"] = mode_sessions
