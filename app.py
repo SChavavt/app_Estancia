@@ -2627,6 +2627,8 @@ def integrate_app_with_pupil(
     gaze_df,
     world_ts,
     blink_df=None,
+    pupil_df=None,
+    export_info_df=None,
 ):
     world_array = np.asarray(world_ts).flatten()
     if world_array.size == 0:
@@ -2808,18 +2810,26 @@ def integrate_app_with_pupil(
                     .reset_index(drop=True)
                 )
 
-    return {
+    results = {
+        "df_app": excel_df,
         "framewise_gaze": df_framewise,
         "per_screen": df_per_screen,
         "per_mode": df_per_mode,
         "blinks_per_mode": blink_results,
     }
 
+    if isinstance(pupil_df, pd.DataFrame):
+        results["pupil_raw"] = pupil_df
+    if isinstance(export_info_df, pd.DataFrame):
+        results["export_info"] = export_info_df
+
+    return results
+
 
 def export_final_excel(results_dict) -> bytes:
     buffer = BytesIO()
     sheet_order = [
-        ("Resumen_App", results_dict.get("excel_resumen")),
+        ("Resumen_App", results_dict.get("excel_resumen") or results_dict.get("df_app")),
         ("Gaze_Framewise", results_dict.get("framewise_gaze")),
         ("AOI_Por_Pantalla", results_dict.get("per_screen")),
         ("AOI_Por_Modo", results_dict.get("per_mode")),
@@ -2829,6 +2839,8 @@ def export_final_excel(results_dict) -> bytes:
         sheet_order.append(("Blinks_Por_Modo", results_dict.get("blinks_per_mode")))
     if isinstance(results_dict.get("pupil_raw"), pd.DataFrame):
         sheet_order.append(("Pupil_Raw", results_dict.get("pupil_raw")))
+    if isinstance(results_dict.get("export_info"), pd.DataFrame):
+        sheet_order.append(("Export_Info", results_dict.get("export_info")))
 
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         for sheet_name, df_value in sheet_order:
@@ -2839,6 +2851,148 @@ def export_final_excel(results_dict) -> bytes:
 
     buffer.seek(0)
     return buffer.getvalue()
+
+
+def _get_github_repo_instance():
+    if "GITHUB_TOKEN" not in st.secrets:
+        st.error("No se configuró el token de GitHub en st.secrets.")
+        return None
+    try:
+        github_client = Github(st.secrets["GITHUB_TOKEN"])
+        return github_client.get_repo("app_Estancia")
+    except GithubException as gh_error:
+        datos_error = getattr(gh_error, "data", {})
+        mensaje_error = (
+            datos_error.get("message", str(gh_error))
+            if isinstance(datos_error, dict)
+            else str(gh_error)
+        )
+        st.error(f"❌ Error al conectar con GitHub: {mensaje_error}")
+    except Exception as generic_error:
+        st.error(f"❌ Error al conectar con GitHub: {generic_error}")
+    return None
+
+
+def _list_github_participants(repo, force_refresh: bool = False) -> list[str]:
+    cache_key = "admin_participant_ids"
+    if not force_refresh and st.session_state.get(cache_key):
+        return st.session_state[cache_key]
+
+    if repo is None:
+        return []
+
+    try:
+        contents = repo.get_contents("data_participantes")
+        ids = sorted([item.name for item in contents if item.type == "dir"])
+        st.session_state[cache_key] = ids
+        return ids
+    except GithubException as gh_error:
+        if getattr(gh_error, "status", None) == 404:
+            st.error("No se encontró la carpeta 'data_participantes' en el repositorio.")
+            return []
+        datos_error = getattr(gh_error, "data", {})
+        mensaje_error = (
+            datos_error.get("message", str(gh_error))
+            if isinstance(datos_error, dict)
+            else str(gh_error)
+        )
+        st.error(f"❌ Error al listar participantes: {mensaje_error}")
+    except Exception as generic_error:
+        st.error(f"❌ Error inesperado al listar participantes: {generic_error}")
+    return []
+
+
+def _expected_participant_files(participant_id: str) -> dict[str, str]:
+    base = f"data_participantes/{participant_id}"
+    return {
+        "excel_experimento": f"{base}/experimento_{participant_id}.xlsx",
+        "gaze": f"{base}/gaze_positions.csv",
+        "timestamps": f"{base}/world_timestamps.npy",
+        "blinks": f"{base}/blink_detection_report.csv",
+        "pupil": f"{base}/pupil_positions.csv",
+        "export_info": f"{base}/export_info.csv",
+        "video": f"{base}/world.mp4",
+        "excel_final": f"{base}/analisis_final_{participant_id}.xlsx",
+    }
+
+
+def _check_participant_files(repo, participant_id: str, force_refresh: bool = False):
+    cache_key = "admin_status_cache"
+    cache = st.session_state.setdefault(cache_key, {})
+    if not force_refresh and cache.get(participant_id):
+        return cache[participant_id]
+
+    status: dict[str, dict[str, Any]] = {}
+    expected_files = _expected_participant_files(participant_id)
+
+    if repo is None:
+        return status
+
+    for key, path in expected_files.items():
+        try:
+            contents = repo.get_contents(path)
+            status[key] = {"exists": True, "path": path, "sha": contents.sha}
+        except GithubException as gh_error:
+            if getattr(gh_error, "status", None) == 404:
+                status[key] = {"exists": False, "path": path, "sha": None}
+            else:
+                datos_error = getattr(gh_error, "data", {})
+                mensaje_error = (
+                    datos_error.get("message", str(gh_error))
+                    if isinstance(datos_error, dict)
+                    else str(gh_error)
+                )
+                st.error(f"❌ Error al verificar {path}: {mensaje_error}")
+                status[key] = {"exists": False, "path": path, "sha": None}
+        except Exception as generic_error:
+            st.error(f"❌ Error inesperado al verificar {path}: {generic_error}")
+            status[key] = {"exists": False, "path": path, "sha": None}
+
+    cache[participant_id] = status
+    st.session_state[cache_key] = cache
+    return status
+
+
+def _upload_to_repo(repo, path: str, content_bytes: bytes, existing_sha: Optional[str] = None) -> bool:
+    if repo is None:
+        return False
+    try:
+        if existing_sha:
+            repo.update_file(path, "Actualiza archivo de participante", content_bytes, existing_sha, branch="main")
+        else:
+            repo.create_file(path, "Agrega archivo de participante", content_bytes, branch="main")
+        return True
+    except GithubException as gh_error:
+        datos_error = getattr(gh_error, "data", {})
+        mensaje_error = (
+            datos_error.get("message", str(gh_error))
+            if isinstance(datos_error, dict)
+            else str(gh_error)
+        )
+        st.error(f"❌ Error al subir {path}: {mensaje_error}")
+    except Exception as generic_error:
+        st.error(f"❌ Error inesperado al subir {path}: {generic_error}")
+    return False
+
+
+def _download_repo_file(repo, path: str) -> tuple[Optional[bytes], Optional[str]]:
+    if repo is None:
+        return None, None
+    try:
+        contents = repo.get_contents(path)
+        return base64.b64decode(contents.content), contents.sha
+    except GithubException as gh_error:
+        if getattr(gh_error, "status", None) != 404:
+            datos_error = getattr(gh_error, "data", {})
+            mensaje_error = (
+                datos_error.get("message", str(gh_error))
+                if isinstance(datos_error, dict)
+                else str(gh_error)
+            )
+            st.error(f"❌ Error al descargar {path}: {mensaje_error}")
+    except Exception as generic_error:
+        st.error(f"❌ Error inesperado al descargar {path}: {generic_error}")
+    return None, None
 
 
 def append_record_to_results(
@@ -3797,13 +3951,6 @@ with tab2:
 with tab_admin:
     st.header("🛠️ Panel de Administración")
     st.session_state.setdefault("admin_authenticated", False)
-    st.session_state.setdefault("analysis_app_excel", None)
-    st.session_state.setdefault("analysis_gaze", None)
-    st.session_state.setdefault("analysis_timestamps", None)
-    st.session_state.setdefault("analysis_blinks", None)
-    st.session_state.setdefault("analysis_pupil", None)
-    st.session_state.setdefault("analysis_exportinfo", None)
-    st.session_state.setdefault("analysis_video", None)
     st.session_state.setdefault("analysis_result", None)
 
     if not st.session_state["admin_authenticated"]:
@@ -3821,102 +3968,163 @@ with tab_admin:
                 st.error("Contraseña incorrecta. Intenta nuevamente.")
         st.stop()
 
-    def _render_upload(key: str, label: str, types: list[str], optional: bool = False):
-        uploaded = st.file_uploader(label, type=types, key=f"uploader_{key}")
-        if uploaded is not None:
-            st.session_state[key] = uploaded.getvalue()
-        if st.session_state.get(key):
-            st.success("Archivo cargado correctamente.")
-        else:
-            status = "(opcional)" if optional else "(obligatorio)"
-            st.caption(f":gray[Archivo no cargado aún {status}]")
+    repo = _get_github_repo_instance()
+    participant_ids = _list_github_participants(repo)
 
-    st.subheader("📂 Carga de archivos – App + Pupil Labs")
-    st.caption(
-        "Carga primero los archivos obligatorios. La carga no ejecuta análisis hasta que presiones el botón correspondiente."
-    )
-
-    mandatory_cols = st.columns(3)
-    with mandatory_cols[0]:
-        _render_upload(
-            "analysis_app_excel",
-            "Excel de la app (hoja 'Resumen')",
-            ["xlsx"],
+    st.subheader("👥 Participantes disponibles")
+    cols_top = st.columns([3, 1])
+    with cols_top[0]:
+        selected_id = st.selectbox(
+            "Selecciona un participante",
+            participant_ids,
+            index=0 if participant_ids else None,
+            key="admin_selected_participant",
         )
-    with mandatory_cols[1]:
-        _render_upload("analysis_gaze", "gaze_positions.csv", ["csv"])
-    with mandatory_cols[2]:
-        _render_upload("analysis_timestamps", "world_timestamps.npy", ["npy"])
+    with cols_top[1]:
+        if st.button("🔄 Refrescar lista"):
+            participant_ids = _list_github_participants(repo, force_refresh=True)
+            st.session_state.pop("admin_status_cache", None)
+            st.experimental_rerun()
 
-    optional_cols = st.columns(3)
-    with optional_cols[0]:
-        _render_upload("analysis_blinks", "blink_detection_report.csv (opcional)", ["csv"], True)
-    with optional_cols[1]:
-        _render_upload("analysis_pupil", "pupil_positions.csv (opcional)", ["csv"], True)
-    with optional_cols[2]:
-        _render_upload("analysis_exportinfo", "export_info.csv (opcional)", ["csv"], True)
+    if st.session_state.get("analysis_participant") != selected_id:
+        st.session_state["analysis_participant"] = selected_id
+        st.session_state.pop("analysis_result", None)
+        st.session_state.pop("analysis_final_excel", None)
+        st.session_state.pop("analysis_video", None)
 
-    video_col = st.columns(1)[0]
-    with video_col:
-        _render_upload("analysis_video", "world.mp4 (opcional)", ["mp4"], True)
+    if not selected_id:
+        st.info("Selecciona un participante para revisar sus archivos.")
+        st.stop()
 
-    st.divider()
-    st.subheader("📊 Análisis del Experimento – Integración App + Pupil Labs")
-    st.caption(
-        "Combina los datos generados por la app del experimento visual con los archivos esenciales de Pupil Labs."
+    status_map = _check_participant_files(repo, selected_id)
+    expected_paths = _expected_participant_files(selected_id)
+
+    st.markdown("### 📑 Estado de archivos del participante")
+    file_labels = {
+        "excel_experimento": f"experimento_{selected_id}.xlsx",
+        "gaze": "gaze_positions.csv",
+        "timestamps": "world_timestamps.npy",
+        "blinks": "blink_detection_report.csv",
+        "pupil": "pupil_positions.csv",
+        "export_info": "export_info.csv",
+        "video": "world.mp4",
+        "excel_final": f"analisis_final_{selected_id}.xlsx",
+    }
+
+    status_rows = []
+    for key, label in file_labels.items():
+        exists = status_map.get(key, {}).get("exists", False)
+        symbol = "✔️" if exists else "❌"
+        status_rows.append({"Archivo": label, "Estado": symbol})
+    st.dataframe(pd.DataFrame(status_rows), hide_index=True)
+
+    st.markdown("### ⬆️ Subir/actualizar archivos de Pupil Labs")
+    st.caption("Carga los archivos faltantes o reemplaza los existentes. Se guardan directamente en GitHub.")
+
+    upload_fields = [
+        ("gaze", "gaze_positions.csv", ["csv"], False),
+        ("timestamps", "world_timestamps.npy", ["npy"], False),
+        ("blinks", "blink_detection_report.csv", ["csv"], True),
+        ("pupil", "pupil_positions.csv", ["csv"], True),
+        ("export_info", "export_info.csv", ["csv"], True),
+        ("video", "world.mp4", ["mp4"], True),
+    ]
+
+    with st.form("upload_pupil_files"):
+        upload_columns = st.columns(2)
+        uploaded_files: dict[str, Any] = {}
+        for idx, (key, label, types, optional) in enumerate(upload_fields):
+            target_col = upload_columns[idx % 2]
+            with target_col:
+                exists = status_map.get(key, {}).get("exists", False)
+                prefix = "✔️" if exists else "❌"
+                st.write(f"{prefix} {label}")
+                if not exists:
+                    st.warning(f"{label} no encontrado. Súbelo para continuar." , icon="⚠️")
+                uploaded_files[key] = st.file_uploader(label, type=types, key=f"uploader_{key}")
+                if optional:
+                    st.caption(":gray[Opcional]")
+        submitted = st.form_submit_button("💾 Guardar archivos en GitHub")
+
+    if submitted:
+        any_uploaded = False
+        for key, file_obj in uploaded_files.items():
+            if file_obj is None:
+                continue
+            path = expected_paths[key]
+            sha = status_map.get(key, {}).get("sha")
+            success = _upload_to_repo(repo, path, file_obj.getvalue(), sha)
+            if success:
+                any_uploaded = True
+        if any_uploaded:
+            st.success("Archivos subidos correctamente. Actualizando estado...")
+            status_map = _check_participant_files(repo, selected_id, force_refresh=True)
+        else:
+            st.info("No se seleccionaron archivos para subir.")
+
+    st.markdown("### 📊 Análisis del Experimento – Integración App + Pupil Labs")
+    mandatory_keys = ["excel_experimento", "gaze", "timestamps"]
+    missing = [
+        file_labels[key]
+        for key in mandatory_keys
+        if not status_map.get(key, {}).get("exists")
+    ]
+
+    analysis_ready = len(missing) == 0
+    if not analysis_ready:
+        st.error(
+            "Faltan archivos obligatorios para este participante. "
+            "Sube al menos gaze_positions.csv y world_timestamps.npy para poder ejecutar el análisis."
+        )
+
+    run_analysis = st.button(
+        "🚀 Ejecutar análisis del participante",
+        disabled=not analysis_ready,
     )
 
-    if st.button("🚀 Ejecutar análisis del participante"):
-        missing = [
-            label
-            for key, label in [
-                ("analysis_app_excel", "Excel del experimento"),
-                ("analysis_gaze", "gaze_positions.csv"),
-                ("analysis_timestamps", "world_timestamps.npy"),
-            ]
-            if not st.session_state.get(key)
-        ]
-        if missing:
-            st.error(
-                "Faltan archivos obligatorios para procesar: " + ", ".join(missing)
+    if run_analysis and analysis_ready:
+        try:
+            excel_bytes, _ = _download_repo_file(repo, expected_paths["excel_experimento"])
+            gaze_bytes, _ = _download_repo_file(repo, expected_paths["gaze"])
+            ts_bytes, _ = _download_repo_file(repo, expected_paths["timestamps"])
+            blinks_bytes, _ = _download_repo_file(repo, expected_paths["blinks"])
+            pupil_bytes, _ = _download_repo_file(repo, expected_paths["pupil"])
+            export_info_bytes, _ = _download_repo_file(repo, expected_paths["export_info"])
+            video_bytes, _ = _download_repo_file(repo, expected_paths["video"])
+
+            excel_df = pd.read_excel(BytesIO(excel_bytes), sheet_name="Resumen")
+            gaze_df = pd.read_csv(BytesIO(gaze_bytes))
+            world_ts = np.load(BytesIO(ts_bytes), allow_pickle=False)
+            blink_df = pd.read_csv(BytesIO(blinks_bytes)) if blinks_bytes else None
+            pupil_df = pd.read_csv(BytesIO(pupil_bytes)) if pupil_bytes else None
+            export_info_df = (
+                pd.read_csv(BytesIO(export_info_bytes)) if export_info_bytes else None
             )
-        else:
-            try:
-                excel_df = pd.read_excel(
-                    BytesIO(st.session_state["analysis_app_excel"]),
-                    sheet_name="Resumen",
-                )
-                gaze_df = pd.read_csv(BytesIO(st.session_state["analysis_gaze"]))
-                world_ts = np.load(
-                    BytesIO(st.session_state["analysis_timestamps"]),
-                    allow_pickle=False,
-                )
 
-                blink_df = (
-                    pd.read_csv(BytesIO(st.session_state["analysis_blinks"]))
-                    if st.session_state.get("analysis_blinks")
-                    else None
-                )
-                pupil_df = (
-                    pd.read_csv(BytesIO(st.session_state["analysis_pupil"]))
-                    if st.session_state.get("analysis_pupil")
-                    else None
-                )
+            results = integrate_app_with_pupil(
+                excel_df=excel_df,
+                gaze_df=gaze_df,
+                world_ts=world_ts,
+                blink_df=blink_df,
+                pupil_df=pupil_df,
+                export_info_df=export_info_df,
+            )
+            results["excel_resumen"] = excel_df
+            st.session_state["analysis_result"] = results
+            st.session_state["analysis_video"] = video_bytes
 
-                results = integrate_app_with_pupil(
-                    excel_df=excel_df,
-                    gaze_df=gaze_df,
-                    world_ts=world_ts,
-                    blink_df=blink_df,
-                )
-                results["excel_resumen"] = excel_df
-                if pupil_df is not None:
-                    results["pupil_raw"] = pupil_df
-
-                st.session_state["analysis_result"] = results
-                st.success("Análisis completado. Revisa los resultados debajo.")
-            except Exception as error:
-                st.error(f"No se pudo procesar el análisis: {error}")
+            final_excel_bytes = export_final_excel(results)
+            final_path = expected_paths["excel_final"]
+            final_sha = status_map.get("excel_final", {}).get("sha")
+            saved = _upload_to_repo(repo, final_path, final_excel_bytes, final_sha)
+            if saved:
+                st.success("Análisis completado y Excel final guardado en GitHub.")
+                status_map = _check_participant_files(repo, selected_id, force_refresh=True)
+            else:
+                st.warning("El Excel final no pudo guardarse en GitHub, pero puedes descargarlo abajo.")
+            st.session_state["analysis_final_excel"] = final_excel_bytes
+        except Exception as error:
+            st.error(f"No se pudo procesar el análisis: {error}")
 
     analysis_result = st.session_state.get("analysis_result")
     if analysis_result:
@@ -3982,13 +4190,16 @@ with tab_admin:
 
         st.markdown("### 💾 Exportar resultados")
         participant_id = _sanitize_participant_id(
-            analysis_result.get("excel_resumen", pd.DataFrame())
+            analysis_result.get("excel_resumen") or analysis_result.get("df_app")
+            or pd.DataFrame()
         )
-        excel_final = export_final_excel(analysis_result)
+        excel_final = st.session_state.get("analysis_final_excel") or export_final_excel(
+            analysis_result
+        )
         st.download_button(
             "📥 Descargar Excel Final del Participante",
             data=excel_final,
-            file_name=f"Analisis_Participante_{participant_id or 'sin_id'}.xlsx",
+            file_name=f"analisis_final_{participant_id}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key="analysis_download_button",
         )
