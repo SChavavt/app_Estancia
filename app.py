@@ -2912,6 +2912,176 @@ def _load_registered_names(path: Path) -> tuple[list[str], Optional[str]]:
     return nombres_unicos, None
 
 
+def asignar_grupos_experimentales():
+    def _normalizar_genero(valor: str) -> str:
+        genero = (
+            unicodedata.normalize("NFKD", str(valor))
+            .encode("ascii", "ignore")
+            .decode("ascii")
+            .strip()
+            .upper()
+        )
+        if genero in {"M", "MALE", "HOMBRE", "MASCULINO"}:
+            return "MASCULINO"
+        if genero in {"F", "FEMALE", "MUJER", "FEMENINO", "FEMENINA"}:
+            return "FEMENINO"
+        return "OTRO"
+
+    if "GITHUB_TOKEN" not in st.secrets:
+        return {"status": "error", "msg": "Falta configurar GITHUB_TOKEN."}
+
+    try:
+        github_client = Github(st.secrets["GITHUB_TOKEN"])
+        github_user = github_client.get_user()
+        repo = github_user.get_repo("app_Estancia")
+    except GithubException as gh_error:
+        datos_error = getattr(gh_error, "data", {})
+        mensaje = (
+            datos_error.get("message", str(gh_error))
+            if isinstance(datos_error, dict)
+            else str(gh_error)
+        )
+        return {"status": "error", "msg": mensaje}
+    except Exception as generic_error:
+        return {"status": "error", "msg": str(generic_error)}
+
+    for intento in range(2):
+        try:
+            contents = repo.get_contents(RESULTS_PATH_IN_REPO)
+        except GithubException as gh_error:
+            if gh_error.status == 404:
+                return {
+                    "status": "error",
+                    "msg": "Archivo Resultados_SmartScore.xlsx no encontrado en GitHub.",
+                }
+            datos_error = getattr(gh_error, "data", {})
+            mensaje = (
+                datos_error.get("message", str(gh_error))
+                if isinstance(datos_error, dict)
+                else str(gh_error)
+            )
+            return {"status": "error", "msg": mensaje}
+
+        try:
+            excel_data = base64.b64decode(contents.content)
+            df = pd.read_excel(BytesIO(excel_data))
+        except Exception as read_error:
+            return {"status": "error", "msg": f"No se pudo leer el archivo: {read_error}"}
+
+        columnas_minimas = ["Nombre Completo", "Edad", "Género", "Grupo_Experimental"]
+        for columna in columnas_minimas:
+            if columna not in df.columns:
+                return {"status": "error", "msg": f"Falta columna: {columna}"}
+
+        df_clean = df.dropna(subset=["Edad", "Género"]).copy()
+        df_clean.loc[:, "Edad"] = pd.to_numeric(df_clean["Edad"], errors="coerce")
+        df_clean = df_clean.dropna(subset=["Edad"]).copy()
+
+        if df_clean.empty:
+            return {
+                "status": "error",
+                "msg": "No hay registros válidos para asignar grupos.",
+            }
+
+        df_clean.loc[:, "Género_Normalizado"] = df_clean["Género"].map(_normalizar_genero)
+
+        max_cuartiles = min(4, df_clean["Edad"].nunique())
+        if max_cuartiles <= 1:
+            df_clean.loc[:, "Edad_Cuartil"] = 0
+        else:
+            try:
+                df_clean.loc[:, "Edad_Cuartil"] = pd.qcut(
+                    df_clean["Edad"],
+                    q=max_cuartiles,
+                    labels=False,
+                    duplicates="drop",
+                )
+            except ValueError:
+                df_clean = df_clean.sort_values("Edad").reset_index()
+                df_clean.loc[:, "Edad_Cuartil"] = pd.cut(
+                    np.arange(len(df_clean)),
+                    bins=max_cuartiles,
+                    labels=False,
+                    include_lowest=True,
+                )
+                df_clean = df_clean.set_index("index")
+
+        df_clean.loc[:, "Edad_Cuartil"] = df_clean["Edad_Cuartil"].astype(int)
+
+        asignacion: dict[int, str] = {}
+        con_indices: list[int] = []
+        sin_indices: list[int] = []
+        rng = random.Random(42)
+
+        for (genero, cuartil), group in df_clean.groupby(
+            ["Género_Normalizado", "Edad_Cuartil"],
+            sort=True,
+        ):
+            indices = list(group.index)
+            if not indices:
+                continue
+
+            rng.shuffle(indices)
+            base = len(indices) // 2
+            con_count = base
+            sin_count = base
+
+            if len(indices) % 2:
+                if len(con_indices) <= len(sin_indices):
+                    con_count += 1
+                else:
+                    sin_count += 1
+
+            for idx in indices[:con_count]:
+                asignacion[idx] = "Con SmartScore"
+                con_indices.append(idx)
+
+            for idx in indices[con_count : con_count + sin_count]:
+                asignacion[idx] = "Sin SmartScore"
+                sin_indices.append(idx)
+
+        while abs(len(con_indices) - len(sin_indices)) > 1:
+            if len(con_indices) > len(sin_indices):
+                idx = con_indices.pop()
+                asignacion[idx] = "Sin SmartScore"
+                sin_indices.append(idx)
+            else:
+                idx = sin_indices.pop()
+                asignacion[idx] = "Con SmartScore"
+                con_indices.append(idx)
+
+        for idx, grupo in asignacion.items():
+            df.at[idx, "Grupo_Experimental"] = grupo
+
+        try:
+            repo.update_file(
+                path=RESULTS_PATH_IN_REPO,
+                message="Actualización automática de grupos experimentales",
+                content=_df_to_excel_bytes(df),
+                sha=contents.sha,
+            )
+            return {"status": "ok"}
+        except GithubException as update_error:
+            if update_error.status == 409 and intento == 0:
+                continue
+            datos_error = getattr(update_error, "data", {})
+            mensaje = (
+                datos_error.get("message", str(update_error))
+                if isinstance(datos_error, dict)
+                else str(update_error)
+            )
+            return {"status": "error", "msg": mensaje}
+        except Exception as generic_error:
+            return {"status": "error", "msg": str(generic_error)}
+
+    return {
+        "status": "error",
+        "msg": "Conflicto al guardar los cambios en GitHub tras múltiples intentos.",
+    }
+
+
+
+
 # =========================================================
 # INTERFACES
 # =========================================================
@@ -3622,172 +3792,6 @@ with tab2:
                 _trigger_streamlit_rerun()
 
 
-def asignar_grupos_experimentales():
-    def _normalizar_genero(valor: str) -> str:
-        genero = (
-            unicodedata.normalize("NFKD", str(valor))
-            .encode("ascii", "ignore")
-            .decode("ascii")
-            .strip()
-            .upper()
-        )
-        if genero in {"M", "MALE", "HOMBRE", "MASCULINO"}:
-            return "MASCULINO"
-        if genero in {"F", "FEMALE", "MUJER", "FEMENINO", "FEMENINA"}:
-            return "FEMENINO"
-        return "OTRO"
-
-    if "GITHUB_TOKEN" not in st.secrets:
-        return {"status": "error", "msg": "Falta configurar GITHUB_TOKEN."}
-
-    try:
-        github_client = Github(st.secrets["GITHUB_TOKEN"])
-        github_user = github_client.get_user()
-        repo = github_user.get_repo("app_Estancia")
-    except GithubException as gh_error:
-        datos_error = getattr(gh_error, "data", {})
-        mensaje = (
-            datos_error.get("message", str(gh_error))
-            if isinstance(datos_error, dict)
-            else str(gh_error)
-        )
-        return {"status": "error", "msg": mensaje}
-    except Exception as generic_error:
-        return {"status": "error", "msg": str(generic_error)}
-
-    for intento in range(2):
-        try:
-            contents = repo.get_contents(RESULTS_PATH_IN_REPO)
-        except GithubException as gh_error:
-            if gh_error.status == 404:
-                return {
-                    "status": "error",
-                    "msg": "Archivo Resultados_SmartScore.xlsx no encontrado en GitHub.",
-                }
-            datos_error = getattr(gh_error, "data", {})
-            mensaje = (
-                datos_error.get("message", str(gh_error))
-                if isinstance(datos_error, dict)
-                else str(gh_error)
-            )
-            return {"status": "error", "msg": mensaje}
-
-        try:
-            excel_data = base64.b64decode(contents.content)
-            df = pd.read_excel(BytesIO(excel_data))
-        except Exception as read_error:
-            return {"status": "error", "msg": f"No se pudo leer el archivo: {read_error}"}
-
-        columnas_minimas = ["Nombre Completo", "Edad", "Género", "Grupo_Experimental"]
-        for columna in columnas_minimas:
-            if columna not in df.columns:
-                return {"status": "error", "msg": f"Falta columna: {columna}"}
-
-        df_clean = df.dropna(subset=["Edad", "Género"]).copy()
-        df_clean.loc[:, "Edad"] = pd.to_numeric(df_clean["Edad"], errors="coerce")
-        df_clean = df_clean.dropna(subset=["Edad"]).copy()
-
-        if df_clean.empty:
-            return {
-                "status": "error",
-                "msg": "No hay registros válidos para asignar grupos.",
-            }
-
-        df_clean.loc[:, "Género_Normalizado"] = df_clean["Género"].map(_normalizar_genero)
-
-        max_cuartiles = min(4, df_clean["Edad"].nunique())
-        if max_cuartiles <= 1:
-            df_clean.loc[:, "Edad_Cuartil"] = 0
-        else:
-            try:
-                df_clean.loc[:, "Edad_Cuartil"] = pd.qcut(
-                    df_clean["Edad"],
-                    q=max_cuartiles,
-                    labels=False,
-                    duplicates="drop",
-                )
-            except ValueError:
-                df_clean = df_clean.sort_values("Edad").reset_index()
-                df_clean.loc[:, "Edad_Cuartil"] = pd.cut(
-                    np.arange(len(df_clean)),
-                    bins=max_cuartiles,
-                    labels=False,
-                    include_lowest=True,
-                )
-                df_clean = df_clean.set_index("index")
-
-        df_clean.loc[:, "Edad_Cuartil"] = df_clean["Edad_Cuartil"].astype(int)
-
-        asignacion: dict[int, str] = {}
-        con_indices: list[int] = []
-        sin_indices: list[int] = []
-        rng = random.Random(42)
-
-        for (genero, cuartil), group in df_clean.groupby(
-            ["Género_Normalizado", "Edad_Cuartil"],
-            sort=True,
-        ):
-            indices = list(group.index)
-            if not indices:
-                continue
-
-            rng.shuffle(indices)
-            base = len(indices) // 2
-            con_count = base
-            sin_count = base
-
-            if len(indices) % 2:
-                if len(con_indices) <= len(sin_indices):
-                    con_count += 1
-                else:
-                    sin_count += 1
-
-            for idx in indices[:con_count]:
-                asignacion[idx] = "Con SmartScore"
-                con_indices.append(idx)
-
-            for idx in indices[con_count : con_count + sin_count]:
-                asignacion[idx] = "Sin SmartScore"
-                sin_indices.append(idx)
-
-        while abs(len(con_indices) - len(sin_indices)) > 1:
-            if len(con_indices) > len(sin_indices):
-                idx = con_indices.pop()
-                asignacion[idx] = "Sin SmartScore"
-                sin_indices.append(idx)
-            else:
-                idx = sin_indices.pop()
-                asignacion[idx] = "Con SmartScore"
-                con_indices.append(idx)
-
-        for idx, grupo in asignacion.items():
-            df.at[idx, "Grupo_Experimental"] = grupo
-
-        try:
-            repo.update_file(
-                path=RESULTS_PATH_IN_REPO,
-                message="Actualización automática de grupos experimentales",
-                content=_df_to_excel_bytes(df),
-                sha=contents.sha,
-            )
-            return {"status": "ok"}
-        except GithubException as update_error:
-            if update_error.status == 409 and intento == 0:
-                continue
-            datos_error = getattr(update_error, "data", {})
-            mensaje = (
-                datos_error.get("message", str(update_error))
-                if isinstance(datos_error, dict)
-                else str(update_error)
-            )
-            return {"status": "error", "msg": mensaje}
-        except Exception as generic_error:
-            return {"status": "error", "msg": str(generic_error)}
-
-    return {
-        "status": "error",
-        "msg": "Conflicto al guardar los cambios en GitHub tras múltiples intentos.",
-    }
 
 
 with tab_admin:
