@@ -2993,6 +2993,84 @@ def _download_repo_file(repo, path: str) -> tuple[Optional[bytes], Optional[str]
     return None, None
 
 
+def _load_results_dataframe(repo, force_refresh: bool = False) -> tuple[pd.DataFrame, Optional[str]]:
+    cache_key = "admin_results_cache"
+    cache = st.session_state.get(cache_key)
+    if not force_refresh and isinstance(cache, dict):
+        cached_df = cache.get("df")
+        cached_sha = cache.get("sha")
+        if isinstance(cached_df, pd.DataFrame):
+            return cached_df, cached_sha
+
+    if repo is None:
+        return pd.DataFrame(), None
+
+    try:
+        contents = repo.get_contents(RESULTS_PATH_IN_REPO)
+        excel_bytes = base64.b64decode(contents.content)
+        df = pd.read_excel(BytesIO(excel_bytes))
+        df = _reorder_person_columns(df)
+        st.session_state[cache_key] = {"df": df, "sha": contents.sha}
+        return df, contents.sha
+    except GithubException as gh_error:
+        status = getattr(gh_error, "status", None)
+        if status == 404:
+            st.error("No se encontró 'Resultados_SmartScore.xlsx' en el repositorio.")
+        else:
+            datos_error = getattr(gh_error, "data", {})
+            mensaje_error = (
+                datos_error.get("message", str(gh_error))
+                if isinstance(datos_error, dict)
+                else str(gh_error)
+            )
+            st.error(
+                f"❌ Error al leer 'Resultados_SmartScore.xlsx' desde GitHub: {mensaje_error}"
+            )
+    except Exception as generic_error:
+        st.error(
+            f"❌ Error inesperado al leer 'Resultados_SmartScore.xlsx': {generic_error}"
+        )
+
+    return pd.DataFrame(), None
+
+
+def _save_results_dataframe(
+    repo, df: pd.DataFrame, sha: Optional[str], message: str
+) -> bool:
+    if repo is None:
+        return False
+    if not sha:
+        st.error("No se pudo determinar la versión actual del archivo en GitHub.")
+        return False
+
+    try:
+        repo.update_file(
+            RESULTS_PATH_IN_REPO,
+            message,
+            _df_to_excel_bytes(_reorder_person_columns(df)),
+            sha,
+            branch="main",
+        )
+        return True
+    except GithubException as gh_error:
+        datos_error = getattr(gh_error, "data", {})
+        mensaje_error = (
+            datos_error.get("message", str(gh_error))
+            if isinstance(datos_error, dict)
+            else str(gh_error)
+        )
+        st.error(
+            "❌ No se pudo guardar el Excel de resultados en GitHub. "
+            f"Detalle: {mensaje_error}"
+        )
+    except Exception as generic_error:
+        st.error(
+            "❌ Ocurrió un error inesperado al guardar el Excel de resultados. "
+            f"Detalle: {generic_error}"
+        )
+    return False
+
+
 def append_record_to_results(
     repo, ruta_archivo: str, nuevo_registro: pd.DataFrame, persona_nombre: str
 ) -> None:
@@ -3972,6 +4050,90 @@ with tab_admin:
 
     repo = _get_github_repo_instance()
     participant_ids = _list_github_participants(repo)
+
+    st.markdown("### 🗑️ Eliminar participantes de Resultados_SmartScore.xlsx")
+    refresh_results = st.button("🔄 Refrescar resultados", key="refresh_results_excel")
+    results_df, results_sha = _load_results_dataframe(repo, force_refresh=refresh_results)
+
+    if results_df.empty:
+        st.info("Aún no hay registros para mostrar o no se pudo leer el Excel de resultados.")
+    else:
+        display_columns = [
+            col
+            for col in [
+                "Nombre Completo",
+                "ID_Participante",
+                "Fecha",
+                "Edad",
+                "Género",
+                "Grupo_Experimental",
+            ]
+            if col in results_df.columns
+        ]
+
+        st.dataframe(
+            results_df[display_columns] if display_columns else results_df,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        with st.form("delete_results_participant"):
+            st.markdown("#### Selecciona el registro que deseas eliminar")
+
+            def _format_result_option(idx_value):
+                fila = results_df.loc[idx_value]
+                nombre = str(fila.get("Nombre Completo", "")).strip() or "Sin nombre"
+                participante_id = str(fila.get("ID_Participante", "")).strip()
+                fecha_valor = str(fila.get("Fecha", "")).strip()
+                partes = [nombre]
+                if participante_id:
+                    partes.append(participante_id)
+                if fecha_valor:
+                    partes.append(fecha_valor)
+                return " · ".join(partes)
+
+            opciones = list(results_df.index)
+            seleccion = st.selectbox(
+                "Registro a eliminar",
+                opciones,
+                format_func=_format_result_option,
+                key="admin_delete_results_selection",
+            )
+
+            if seleccion is not None:
+                st.caption("Registro seleccionado:")
+                st.dataframe(
+                    results_df.loc[[seleccion]],
+                    hide_index=True,
+                    use_container_width=True,
+                )
+
+            confirmar = st.checkbox(
+                "Confirmo que deseo eliminar este participante del Excel",
+                key="admin_confirm_delete_results",
+            )
+            eliminar = st.form_submit_button(
+                "Eliminar del Excel de resultados",
+                disabled=seleccion is None,
+            )
+
+            if eliminar:
+                if not confirmar:
+                    st.warning("Marca la casilla de confirmación para continuar con la eliminación.")
+                else:
+                    df_actualizado = results_df.drop(index=seleccion).reset_index(drop=True)
+                    guardado = _save_results_dataframe(
+                        repo,
+                        df_actualizado,
+                        results_sha,
+                        "Elimina participante desde panel de administración",
+                    )
+                    if guardado:
+                        st.success(
+                            "Participante eliminado del archivo 'Resultados_SmartScore.xlsx'."
+                        )
+                        st.session_state.pop("admin_results_cache", None)
+                        st.experimental_rerun()
 
     st.subheader("👥 Participantes disponibles")
     cols_top = st.columns([3, 1])
