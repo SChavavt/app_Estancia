@@ -4166,220 +4166,220 @@ with tab_admin:
                 st.session_state.pop("admin_status_cache", None)
                 _trigger_streamlit_rerun()
 
-    if st.session_state.get("analysis_participant") != selected_id:
-        st.session_state["analysis_participant"] = selected_id
-        st.session_state.pop("analysis_result", None)
-        st.session_state.pop("analysis_final_excel", None)
-        st.session_state.pop("analysis_video", None)
-
-    if not selected_id:
-        st.info("Selecciona un participante para revisar sus archivos.")
-        st.stop()
-
-    status_map = _check_participant_files(repo, selected_id)
-    expected_paths = _expected_participant_files(selected_id)
-
-    st.markdown("### 📑 Estado de archivos del participante")
-    file_labels = {
-        "excel_experimento": f"experimento_{selected_id}.xlsx",
-        "gaze": "gaze_positions.csv",
-        "timestamps": "world_timestamps.npy",
-        "blinks": "blink_detection_report.csv",
-        "pupil": "pupil_positions.csv",
-        "export_info": "export_info.csv",
-        "video": "world.mp4",
-        "excel_final": f"analisis_final_{selected_id}.xlsx",
-    }
-
-    status_rows = []
-    for key, label in file_labels.items():
-        exists = status_map.get(key, {}).get("exists", False)
-        symbol = "✔️" if exists else "❌"
-        status_rows.append({"Archivo": label, "Estado": symbol})
-    st.dataframe(pd.DataFrame(status_rows), hide_index=True)
-
-    st.markdown("### ⬆️ Subir/actualizar archivos de Pupil Labs")
-    st.caption("Carga los archivos faltantes o reemplaza los existentes. Se guardan directamente en GitHub.")
-
-    upload_fields = [
-        ("gaze", "gaze_positions.csv", ["csv"], False),
-        ("timestamps", "world_timestamps.npy", ["npy"], False),
-        ("blinks", "blink_detection_report.csv", ["csv"], True),
-        ("pupil", "pupil_positions.csv", ["csv"], True),
-        ("export_info", "export_info.csv", ["csv"], True),
-        ("video", "world.mp4", ["mp4"], True),
-    ]
-
-    with st.form("upload_pupil_files"):
-        upload_columns = st.columns(2)
-        uploaded_files: dict[str, Any] = {}
-        for idx, (key, label, types, optional) in enumerate(upload_fields):
-            target_col = upload_columns[idx % 2]
-            with target_col:
-                exists = status_map.get(key, {}).get("exists", False)
-                prefix = "✔️" if exists else "❌"
-                st.write(f"{prefix} {label}")
-                if not exists:
-                    st.warning(f"{label} no encontrado. Súbelo para continuar." , icon="⚠️")
-                uploaded_files[key] = st.file_uploader(label, type=types, key=f"uploader_{key}")
-                if optional:
-                    st.caption(":gray[Opcional]")
-        submitted = st.form_submit_button("💾 Guardar archivos en GitHub")
-
-    if submitted:
-        any_uploaded = False
-        for key, file_obj in uploaded_files.items():
-            if file_obj is None:
-                continue
-            path = expected_paths[key]
-            sha = status_map.get(key, {}).get("sha")
-            success = _upload_to_repo(repo, path, file_obj.getvalue(), sha)
-            if success:
-                any_uploaded = True
-        if any_uploaded:
-            st.success("Archivos subidos correctamente. Actualizando estado...")
-            status_map = _check_participant_files(repo, selected_id, force_refresh=True)
-        else:
-            st.info("No se seleccionaron archivos para subir.")
-
-    st.markdown("### 📊 Análisis del Experimento – Integración App + Pupil Labs")
-    mandatory_keys = ["excel_experimento", "gaze", "timestamps"]
-    missing = [
-        file_labels[key]
-        for key in mandatory_keys
-        if not status_map.get(key, {}).get("exists")
-    ]
-
-    analysis_ready = len(missing) == 0
-    if not analysis_ready:
-        st.error(
-            "Faltan archivos obligatorios para este participante. "
-            "Sube al menos gaze_positions.csv y world_timestamps.npy para poder ejecutar el análisis."
-        )
-
-    run_analysis = st.button(
-        "🚀 Ejecutar análisis del participante",
-        disabled=not analysis_ready,
-    )
-
-    if run_analysis and analysis_ready:
-        try:
-            excel_bytes, _ = _download_repo_file(repo, expected_paths["excel_experimento"])
-            gaze_bytes, _ = _download_repo_file(repo, expected_paths["gaze"])
-            ts_bytes, _ = _download_repo_file(repo, expected_paths["timestamps"])
-            blinks_bytes, _ = _download_repo_file(repo, expected_paths["blinks"])
-            pupil_bytes, _ = _download_repo_file(repo, expected_paths["pupil"])
-            export_info_bytes, _ = _download_repo_file(repo, expected_paths["export_info"])
-            video_bytes, _ = _download_repo_file(repo, expected_paths["video"])
-
-            excel_df = pd.read_excel(BytesIO(excel_bytes), sheet_name="Resumen")
-            gaze_df = pd.read_csv(BytesIO(gaze_bytes))
-            world_ts = np.load(BytesIO(ts_bytes), allow_pickle=False)
-            blink_df = pd.read_csv(BytesIO(blinks_bytes)) if blinks_bytes else None
-            pupil_df = pd.read_csv(BytesIO(pupil_bytes)) if pupil_bytes else None
-            export_info_df = (
-                pd.read_csv(BytesIO(export_info_bytes)) if export_info_bytes else None
-            )
-
-            results = integrate_app_with_pupil(
-                excel_df=excel_df,
-                gaze_df=gaze_df,
-                world_ts=world_ts,
-                blink_df=blink_df,
-                pupil_df=pupil_df,
-                export_info_df=export_info_df,
-            )
-            results["excel_resumen"] = excel_df
-            st.session_state["analysis_result"] = results
-            st.session_state["analysis_video"] = video_bytes
-
-            final_excel_bytes = export_final_excel(results)
-            final_path = expected_paths["excel_final"]
-            final_sha = status_map.get("excel_final", {}).get("sha")
-            saved = _upload_to_repo(repo, final_path, final_excel_bytes, final_sha)
-            if saved:
-                st.success("Análisis completado y Excel final guardado en GitHub.")
+        if st.session_state.get("analysis_participant") != selected_id:
+            st.session_state["analysis_participant"] = selected_id
+            st.session_state.pop("analysis_result", None)
+            st.session_state.pop("analysis_final_excel", None)
+            st.session_state.pop("analysis_video", None)
+    
+        if not selected_id:
+            st.info("Selecciona un participante para revisar sus archivos.")
+            st.stop()
+    
+        status_map = _check_participant_files(repo, selected_id)
+        expected_paths = _expected_participant_files(selected_id)
+    
+        st.markdown("### 📑 Estado de archivos del participante")
+        file_labels = {
+            "excel_experimento": f"experimento_{selected_id}.xlsx",
+            "gaze": "gaze_positions.csv",
+            "timestamps": "world_timestamps.npy",
+            "blinks": "blink_detection_report.csv",
+            "pupil": "pupil_positions.csv",
+            "export_info": "export_info.csv",
+            "video": "world.mp4",
+            "excel_final": f"analisis_final_{selected_id}.xlsx",
+        }
+    
+        status_rows = []
+        for key, label in file_labels.items():
+            exists = status_map.get(key, {}).get("exists", False)
+            symbol = "✔️" if exists else "❌"
+            status_rows.append({"Archivo": label, "Estado": symbol})
+        st.dataframe(pd.DataFrame(status_rows), hide_index=True)
+    
+        st.markdown("### ⬆️ Subir/actualizar archivos de Pupil Labs")
+        st.caption("Carga los archivos faltantes o reemplaza los existentes. Se guardan directamente en GitHub.")
+    
+        upload_fields = [
+            ("gaze", "gaze_positions.csv", ["csv"], False),
+            ("timestamps", "world_timestamps.npy", ["npy"], False),
+            ("blinks", "blink_detection_report.csv", ["csv"], True),
+            ("pupil", "pupil_positions.csv", ["csv"], True),
+            ("export_info", "export_info.csv", ["csv"], True),
+            ("video", "world.mp4", ["mp4"], True),
+        ]
+    
+        with st.form("upload_pupil_files"):
+            upload_columns = st.columns(2)
+            uploaded_files: dict[str, Any] = {}
+            for idx, (key, label, types, optional) in enumerate(upload_fields):
+                target_col = upload_columns[idx % 2]
+                with target_col:
+                    exists = status_map.get(key, {}).get("exists", False)
+                    prefix = "✔️" if exists else "❌"
+                    st.write(f"{prefix} {label}")
+                    if not exists:
+                        st.warning(f"{label} no encontrado. Súbelo para continuar." , icon="⚠️")
+                    uploaded_files[key] = st.file_uploader(label, type=types, key=f"uploader_{key}")
+                    if optional:
+                        st.caption(":gray[Opcional]")
+            submitted = st.form_submit_button("💾 Guardar archivos en GitHub")
+    
+        if submitted:
+            any_uploaded = False
+            for key, file_obj in uploaded_files.items():
+                if file_obj is None:
+                    continue
+                path = expected_paths[key]
+                sha = status_map.get(key, {}).get("sha")
+                success = _upload_to_repo(repo, path, file_obj.getvalue(), sha)
+                if success:
+                    any_uploaded = True
+            if any_uploaded:
+                st.success("Archivos subidos correctamente. Actualizando estado...")
                 status_map = _check_participant_files(repo, selected_id, force_refresh=True)
             else:
-                st.warning("El Excel final no pudo guardarse en GitHub, pero puedes descargarlo abajo.")
-            st.session_state["analysis_final_excel"] = final_excel_bytes
-        except Exception as error:
-            st.error(f"No se pudo procesar el análisis: {error}")
-
-    analysis_result = st.session_state.get("analysis_result")
-    if analysis_result:
-        st.markdown("### 📈 Visualizaciones y métricas")
-
-        framewise = analysis_result.get("framewise_gaze", pd.DataFrame())
-        per_screen = analysis_result.get("per_screen", pd.DataFrame())
-        per_mode = analysis_result.get("per_mode", pd.DataFrame())
-        blinks_mode = analysis_result.get("blinks_per_mode", pd.DataFrame())
-
-        st.markdown("#### 🔥 Heatmap simple")
-        heatmap_df = framewise.dropna(subset=["norm_pos_x", "norm_pos_y"]).copy()
-        if not heatmap_df.empty:
-            st.scatter_chart(heatmap_df, x="norm_pos_x", y="norm_pos_y")
-        else:
-            st.caption(":gray[Sin muestras de gaze para graficar.]")
-
-        st.markdown("#### 🛍️ Atención por producto (AOI por pantalla)")
-        if not per_screen.empty:
-            dwell_product = (
-                per_screen.groupby("Producto", as_index=False)["Dwell_Time"].sum()
+                st.info("No se seleccionaron archivos para subir.")
+    
+        st.markdown("### 📊 Análisis del Experimento – Integración App + Pupil Labs")
+        mandatory_keys = ["excel_experimento", "gaze", "timestamps"]
+        missing = [
+            file_labels[key]
+            for key in mandatory_keys
+            if not status_map.get(key, {}).get("exists")
+        ]
+    
+        analysis_ready = len(missing) == 0
+        if not analysis_ready:
+            st.error(
+                "Faltan archivos obligatorios para este participante. "
+                "Sube al menos gaze_positions.csv y world_timestamps.npy para poder ejecutar el análisis."
             )
-            fix_product = (
-                per_screen.groupby("Producto", as_index=False)["Fixaciones"].sum()
+    
+        run_analysis = st.button(
+            "🚀 Ejecutar análisis del participante",
+            disabled=not analysis_ready,
+        )
+    
+        if run_analysis and analysis_ready:
+            try:
+                excel_bytes, _ = _download_repo_file(repo, expected_paths["excel_experimento"])
+                gaze_bytes, _ = _download_repo_file(repo, expected_paths["gaze"])
+                ts_bytes, _ = _download_repo_file(repo, expected_paths["timestamps"])
+                blinks_bytes, _ = _download_repo_file(repo, expected_paths["blinks"])
+                pupil_bytes, _ = _download_repo_file(repo, expected_paths["pupil"])
+                export_info_bytes, _ = _download_repo_file(repo, expected_paths["export_info"])
+                video_bytes, _ = _download_repo_file(repo, expected_paths["video"])
+    
+                excel_df = pd.read_excel(BytesIO(excel_bytes), sheet_name="Resumen")
+                gaze_df = pd.read_csv(BytesIO(gaze_bytes))
+                world_ts = np.load(BytesIO(ts_bytes), allow_pickle=False)
+                blink_df = pd.read_csv(BytesIO(blinks_bytes)) if blinks_bytes else None
+                pupil_df = pd.read_csv(BytesIO(pupil_bytes)) if pupil_bytes else None
+                export_info_df = (
+                    pd.read_csv(BytesIO(export_info_bytes)) if export_info_bytes else None
+                )
+    
+                results = integrate_app_with_pupil(
+                    excel_df=excel_df,
+                    gaze_df=gaze_df,
+                    world_ts=world_ts,
+                    blink_df=blink_df,
+                    pupil_df=pupil_df,
+                    export_info_df=export_info_df,
+                )
+                results["excel_resumen"] = excel_df
+                st.session_state["analysis_result"] = results
+                st.session_state["analysis_video"] = video_bytes
+    
+                final_excel_bytes = export_final_excel(results)
+                final_path = expected_paths["excel_final"]
+                final_sha = status_map.get("excel_final", {}).get("sha")
+                saved = _upload_to_repo(repo, final_path, final_excel_bytes, final_sha)
+                if saved:
+                    st.success("Análisis completado y Excel final guardado en GitHub.")
+                    status_map = _check_participant_files(repo, selected_id, force_refresh=True)
+                else:
+                    st.warning("El Excel final no pudo guardarse en GitHub, pero puedes descargarlo abajo.")
+                st.session_state["analysis_final_excel"] = final_excel_bytes
+            except Exception as error:
+                st.error(f"No se pudo procesar el análisis: {error}")
+    
+        analysis_result = st.session_state.get("analysis_result")
+        if analysis_result:
+            st.markdown("### 📈 Visualizaciones y métricas")
+    
+            framewise = analysis_result.get("framewise_gaze", pd.DataFrame())
+            per_screen = analysis_result.get("per_screen", pd.DataFrame())
+            per_mode = analysis_result.get("per_mode", pd.DataFrame())
+            blinks_mode = analysis_result.get("blinks_per_mode", pd.DataFrame())
+    
+            st.markdown("#### 🔥 Heatmap simple")
+            heatmap_df = framewise.dropna(subset=["norm_pos_x", "norm_pos_y"]).copy()
+            if not heatmap_df.empty:
+                st.scatter_chart(heatmap_df, x="norm_pos_x", y="norm_pos_y")
+            else:
+                st.caption(":gray[Sin muestras de gaze para graficar.]")
+    
+            st.markdown("#### 🛍️ Atención por producto (AOI por pantalla)")
+            if not per_screen.empty:
+                dwell_product = (
+                    per_screen.groupby("Producto", as_index=False)["Dwell_Time"].sum()
+                )
+                fix_product = (
+                    per_screen.groupby("Producto", as_index=False)["Fixaciones"].sum()
+                )
+                cols = st.columns(2)
+                with cols[0]:
+                    st.caption("Tiempo de observación por producto")
+                    st.bar_chart(dwell_product.set_index("Producto"))
+                with cols[1]:
+                    st.caption("Fijaciones por producto")
+                    st.bar_chart(fix_product.set_index("Producto"))
+                st.dataframe(per_screen)
+            else:
+                st.caption(":gray[Sin métricas por pantalla disponibles.]")
+    
+            st.markdown("#### 🧭 Atención por modo")
+            if not per_mode.empty:
+                col_mode = st.columns(3)
+                with col_mode[0]:
+                    st.caption("Dwell time total por modo")
+                    st.bar_chart(per_mode.set_index("Modo")["Dwell_Time"])
+                with col_mode[1]:
+                    st.caption("Fijaciones por modo")
+                    st.bar_chart(per_mode.set_index("Modo")["Fixaciones"])
+                with col_mode[2]:
+                    st.caption("Tiempo a primera fijación (TFF)")
+                    st.bar_chart(per_mode.set_index("Modo")["TFF"])
+                st.dataframe(per_mode)
+            else:
+                st.caption(":gray[Sin métricas por modo disponibles.]")
+    
+            st.markdown("#### 👀 Tasa de parpadeo por modo")
+            if isinstance(blinks_mode, pd.DataFrame) and not blinks_mode.empty:
+                st.dataframe(blinks_mode)
+                st.bar_chart(blinks_mode.set_index("Modo")["Blink_Rate_Hz"])
+            else:
+                st.caption(":gray[No se cargó archivo de parpadeos o no se detectaron eventos.]")
+    
+            if st.session_state.get("analysis_video"):
+                st.markdown("#### 🎬 Vista previa de world.mp4")
+                st.video(st.session_state["analysis_video"])
+    
+            st.markdown("### 💾 Exportar resultados")
+            participant_id = _sanitize_participant_id(
+                analysis_result.get("excel_resumen") or analysis_result.get("df_app")
+                or pd.DataFrame()
             )
-            cols = st.columns(2)
-            with cols[0]:
-                st.caption("Tiempo de observación por producto")
-                st.bar_chart(dwell_product.set_index("Producto"))
-            with cols[1]:
-                st.caption("Fijaciones por producto")
-                st.bar_chart(fix_product.set_index("Producto"))
-            st.dataframe(per_screen)
-        else:
-            st.caption(":gray[Sin métricas por pantalla disponibles.]")
-
-        st.markdown("#### 🧭 Atención por modo")
-        if not per_mode.empty:
-            col_mode = st.columns(3)
-            with col_mode[0]:
-                st.caption("Dwell time total por modo")
-                st.bar_chart(per_mode.set_index("Modo")["Dwell_Time"])
-            with col_mode[1]:
-                st.caption("Fijaciones por modo")
-                st.bar_chart(per_mode.set_index("Modo")["Fixaciones"])
-            with col_mode[2]:
-                st.caption("Tiempo a primera fijación (TFF)")
-                st.bar_chart(per_mode.set_index("Modo")["TFF"])
-            st.dataframe(per_mode)
-        else:
-            st.caption(":gray[Sin métricas por modo disponibles.]")
-
-        st.markdown("#### 👀 Tasa de parpadeo por modo")
-        if isinstance(blinks_mode, pd.DataFrame) and not blinks_mode.empty:
-            st.dataframe(blinks_mode)
-            st.bar_chart(blinks_mode.set_index("Modo")["Blink_Rate_Hz"])
-        else:
-            st.caption(":gray[No se cargó archivo de parpadeos o no se detectaron eventos.]")
-
-        if st.session_state.get("analysis_video"):
-            st.markdown("#### 🎬 Vista previa de world.mp4")
-            st.video(st.session_state["analysis_video"])
-
-        st.markdown("### 💾 Exportar resultados")
-        participant_id = _sanitize_participant_id(
-            analysis_result.get("excel_resumen") or analysis_result.get("df_app")
-            or pd.DataFrame()
-        )
-        excel_final = st.session_state.get("analysis_final_excel") or export_final_excel(
-            analysis_result
-        )
-        st.download_button(
-            "📥 Descargar Excel Final del Participante",
-            data=excel_final,
-            file_name=f"analisis_final_{participant_id}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="analysis_download_button",
-        )
+            excel_final = st.session_state.get("analysis_final_excel") or export_final_excel(
+                analysis_result
+            )
+            st.download_button(
+                "📥 Descargar Excel Final del Participante",
+                data=excel_final,
+                file_name=f"analisis_final_{participant_id}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="analysis_download_button",
+            )
