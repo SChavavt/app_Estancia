@@ -4051,104 +4051,120 @@ with tab_admin:
     repo = _get_github_repo_instance()
     participant_ids = _list_github_participants(repo)
 
-    st.markdown("### 🗑️ Eliminar participantes de Resultados_SmartScore.xlsx")
-    refresh_results = st.button("🔄 Refrescar resultados", key="refresh_results_excel")
-    results_df, results_sha = _load_results_dataframe(repo, force_refresh=refresh_results)
+    tab_delete, tab_participants = st.tabs(
+        ["🗑️ Eliminar participantes", "👥 Participantes disponibles"]
+    )
 
-    if results_df.empty:
-        st.info("Aún no hay registros para mostrar o no se pudo leer el Excel de resultados.")
-    else:
-        display_columns = [
-            col
-            for col in [
-                "Nombre Completo",
-                "ID_Participante",
-                "Fecha",
-                "Edad",
-                "Género",
-                "Grupo_Experimental",
-            ]
-            if col in results_df.columns
-        ]
-
-        st.dataframe(
-            results_df[display_columns] if display_columns else results_df,
-            use_container_width=True,
-            hide_index=True,
+    with tab_delete:
+        st.markdown("### 🗑️ Eliminar participantes de Resultados_SmartScore.xlsx")
+        refresh_results = st.button(
+            "🔄 Refrescar resultados", key="refresh_results_excel"
+        )
+        results_df, results_sha = _load_results_dataframe(
+            repo, force_refresh=refresh_results
         )
 
-        with st.form("delete_results_participant"):
-            st.markdown("#### Selecciona el registro que deseas eliminar")
+        if results_df.empty:
+            st.info(
+                "Aún no hay registros para mostrar o no se pudo leer el Excel de resultados."
+            )
+        else:
+            display_columns = [
+                col
+                for col in [
+                    "Nombre Completo",
+                    "ID_Participante",
+                    "Fecha",
+                    "Edad",
+                    "Género",
+                    "Grupo_Experimental",
+                ]
+                if col in results_df.columns
+            ]
 
-            def _format_result_option(idx_value):
-                fila = results_df.loc[idx_value]
-                nombre = str(fila.get("Nombre Completo", "")).strip() or "Sin nombre"
-                participante_id = str(fila.get("ID_Participante", "")).strip()
-                fecha_valor = str(fila.get("Fecha", "")).strip()
-                partes = [nombre]
-                if participante_id:
-                    partes.append(participante_id)
-                if fecha_valor:
-                    partes.append(fecha_valor)
-                return " · ".join(partes)
-
-            opciones = list(results_df.index)
-            seleccion = st.selectbox(
-                "Registro a eliminar",
-                opciones,
-                format_func=_format_result_option,
-                key="admin_delete_results_selection",
+            st.dataframe(
+                results_df[display_columns] if display_columns else results_df,
+                use_container_width=True,
+                hide_index=True,
             )
 
-            if seleccion is not None:
-                st.caption("Registro seleccionado:")
-                st.dataframe(
-                    results_df.loc[[seleccion]],
-                    hide_index=True,
-                    use_container_width=True,
+            with st.form("delete_results_participant"):
+                st.markdown("#### Selecciona el registro que deseas eliminar")
+
+                def _format_result_option(idx_value):
+                    fila = results_df.loc[idx_value]
+                    nombre = str(fila.get("Nombre Completo", "")).strip() or "Sin nombre"
+                    participante_id = str(fila.get("ID_Participante", "")).strip()
+                    fecha_valor = str(fila.get("Fecha", "")).strip()
+                    partes = [nombre]
+                    if participante_id:
+                        partes.append(participante_id)
+                    if fecha_valor:
+                        partes.append(fecha_valor)
+                    return " · ".join(partes)
+
+                opciones = list(results_df.index)
+                seleccion = st.selectbox(
+                    "Registro a eliminar",
+                    opciones,
+                    format_func=_format_result_option,
+                    key="admin_delete_results_selection",
                 )
 
-            confirmar = st.checkbox(
-                "Confirmo que deseo eliminar este participante del Excel",
-                key="admin_confirm_delete_results",
-            )
-            eliminar = st.form_submit_button(
-                "Eliminar del Excel de resultados",
-                disabled=seleccion is None,
-            )
-
-            if eliminar:
-                if not confirmar:
-                    st.warning("Marca la casilla de confirmación para continuar con la eliminación.")
-                else:
-                    df_actualizado = results_df.drop(index=seleccion).reset_index(drop=True)
-                    guardado = _save_results_dataframe(
-                        repo,
-                        df_actualizado,
-                        results_sha,
-                        "Elimina participante desde panel de administración",
+                if seleccion is not None:
+                    st.caption("Registro seleccionado:")
+                    st.dataframe(
+                        results_df.loc[[seleccion]],
+                        hide_index=True,
+                        use_container_width=True,
                     )
-                    if guardado:
-                        st.success(
-                            "Participante eliminado del archivo 'Resultados_SmartScore.xlsx'."
-                        )
-                        st.session_state.pop("admin_results_cache", None)
-                        st.experimental_rerun()
 
-    st.subheader("👥 Participantes disponibles")
-    cols_top = st.columns([3, 1])
-    with cols_top[0]:
-        selected_id = st.selectbox(
-            "Selecciona un participante",
-            participant_ids,
-            index=0 if participant_ids else None,
-            key="admin_selected_participant",
-        )
-    with cols_top[1]:
-        if st.button("🔄 Refrescar lista"):
-            participant_ids = _list_github_participants(repo, force_refresh=True)
-            st.session_state.pop("admin_status_cache", None)
-            st.experimental_rerun()
+                confirmar = st.checkbox(
+                    "Confirmo que deseo eliminar este participante del Excel",
+                    key="admin_confirm_delete_results",
+                )
+                eliminar = st.form_submit_button(
+                    "Eliminar del Excel de resultados",
+                    disabled=seleccion is None,
+                )
+
+                if eliminar:
+                    if not confirmar:
+                        st.warning(
+                            "Marca la casilla de confirmación para continuar con la eliminación."
+                        )
+                    else:
+                        df_actualizado = results_df.drop(index=seleccion).reset_index(
+                            drop=True
+                        )
+                        guardado = _save_results_dataframe(
+                            repo,
+                            df_actualizado,
+                            results_sha,
+                            "Elimina participante desde panel de administración",
+                        )
+                        if guardado:
+                            st.success(
+                                "Participante eliminado del archivo 'Resultados_SmartScore.xlsx'."
+                            )
+                            st.session_state.pop("admin_results_cache", None)
+                            _trigger_streamlit_rerun()
+
+    with tab_participants:
+        st.subheader("👥 Participantes disponibles")
+        cols_top = st.columns([3, 1])
+        with cols_top[0]:
+            selected_id = st.selectbox(
+                "Selecciona un participante",
+                participant_ids,
+                index=0 if participant_ids else None,
+                key="admin_selected_participant",
+            )
+        with cols_top[1]:
+            if st.button("🔄 Refrescar lista"):
+                participant_ids = _list_github_participants(repo, force_refresh=True)
+                st.session_state.pop("admin_status_cache", None)
+                _trigger_streamlit_rerun()
 
     if st.session_state.get("analysis_participant") != selected_id:
         st.session_state["analysis_participant"] = selected_id
