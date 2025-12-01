@@ -2385,10 +2385,10 @@ def _render_aoi_capture_component(screen_id: str, expected_keys: list[str]) -> N
     const cssEscape = (window.CSS && CSS.escape) ? CSS.escape : (value => value);
 
     const collectAOIs = () => {{
-        const entries = {{}};
+        const entries = {{{{}}}};
         const selectors = expected.length
-            ? expected.map(key => `[data-aoi-screen=\'${{screenId}}\'][data-aoi-key=\'${{cssEscape(key)}}\']`)
-            : [`[data-aoi-screen=\'${{screenId}}\'][data-aoi-key]`];
+            ? expected.map(key => `[data-aoi-screen=\'${{{{screenId}}}}\'][data-aoi-key=\'${{{{cssEscape(key)}}}}\']`)
+            : [`[data-aoi-screen=\'${{{{screenId}}}}\'][data-aoi-key]`];
 
         const elements = new Set();
         selectors.forEach(selector => {{
@@ -2402,7 +2402,7 @@ def _render_aoi_capture_component(screen_id: str, expected_keys: list[str]) -> N
             entries[key] = [rect.left, rect.top, rect.right, rect.bottom];
         }});
 
-        const payload = {{ Pantalla_ID: screenId, AOIs: entries }};
+        const payload = {{{{ Pantalla_ID: screenId, AOIs: entries }}}};
         if (Streamlit && Streamlit.setComponentValue) {{
             Streamlit.setComponentValue(payload);
         }}
