@@ -4,6 +4,7 @@ import json
 import random
 import base64
 import html
+import inspect
 import threading
 import time
 import unicodedata
@@ -3327,7 +3328,11 @@ tab_labels = [
     "🛠️ Admin",
 ]
 
-tab1, tab2, tab_admin = st.tabs(tab_labels, key="main_tabs")
+_tabs_support_key = "key" in inspect.signature(st.tabs).parameters
+if _tabs_support_key:
+    tab1, tab2, tab_admin = st.tabs(tab_labels, key="main_tabs")
+else:
+    tab1, tab2, tab_admin = st.tabs(tab_labels)
 
 with tab1:
     _apply_reset_form_state()
