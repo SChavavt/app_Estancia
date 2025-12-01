@@ -3632,8 +3632,11 @@ with tab1:
     st.markdown("---")
 
 with tab2:
-    st.header(t("tab2_header"))
-    st.caption(t("tab2_caption"))
+    is_tab2_fullscreen = st.session_state.get("tab2_fullscreen_mode", False)
+
+    if not is_tab2_fullscreen:
+        st.header(t("tab2_header"))
+        st.caption(t("tab2_caption"))
 
     registered_names, names_error = _load_registered_names(Path(RESULTS_PATH_IN_REPO))
 
@@ -3716,7 +3719,9 @@ with tab2:
     if tab2_can_continue:
         usuario_activo = st.session_state.get("tab2_user_name", "")
         _ensure_tab2_smartscore_map(usuario_activo)
-        st.success(t("tab2_logged_in_as", user=usuario_activo))
+
+        if not is_tab2_fullscreen:
+            st.success(t("tab2_logged_in_as", user=usuario_activo))
 
         if st.button(t("tab2_switch_user"), key="tab2_logout"):
             st.session_state["tab2_authenticated"] = False
