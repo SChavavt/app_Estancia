@@ -350,11 +350,47 @@ IMAGE_STEM_TO_PRODUCT = {
 
 TAB2_IMAGE_STYLES = """
 <style>
+body.tab2-fullscreen-mode {
+    overflow: hidden !important;
+}
+
+body.tab2-fullscreen-mode [data-testid="stAppViewContainer"] > .main {
+    height: 100vh;
+}
+
+body.tab2-fullscreen-mode [data-testid="stAppViewContainer"] > .main .block-container {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+}
+
+.tab2-visual-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    height: 100%;
+}
+
+.tab2-visual-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.tab2-visual-body .stHorizontalBlock, .tab2-visual-body [data-testid="stHorizontalBlock"] {
+    gap: 0.85rem;
+}
+
 .tab2-image-container {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.35rem;
     width: 100%;
 }
 
@@ -375,21 +411,24 @@ TAB2_IMAGE_STYLES = """
 
 
 .tab2-image-container.ab img {
-    height: min(40vh, 420px);
+    height: min(34vh, 360px);
+    max-height: calc(100vh - 260px);
 }
 
 .tab2-image-container.grid img {
-    height: min(28vh, 320px);
+    height: min(24vh, 280px);
+    max-height: calc(100vh - 260px);
 }
 
 .tab2-image-container.seq img {
-    height: min(70vh, 700px);
+    height: min(62vh, 640px);
+    max-height: calc(100vh - 230px);
 }
 
 .tab2-image-container.seq + div[data-testid="stHorizontalBlock"] {
     justify-content: center;
-    margin-top: 0.5rem;
-    gap: 0.75rem;
+    margin-top: 0.4rem;
+    gap: 0.65rem;
 }
 
 .tab2-image-container.seq + div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
@@ -402,14 +441,14 @@ TAB2_IMAGE_STYLES = """
 
 .seq-selection-label {
     text-align: center;
-    margin: 0.35rem 0 0;
+    margin: 0.3rem 0 0;
     font-size: 0.9rem;
 }
 
 .seq-product-position {
     text-align: center;
     font-weight: 600;
-    margin: 0.2rem 0 0.4rem;
+    margin: 0.15rem 0 0.35rem;
 }
 
 .smartscore-label {
@@ -438,15 +477,15 @@ TAB2_IMAGE_STYLES = """
 
 @media (max-width: 1200px) {
     .tab2-image-container.ab img {
-        height: min(34vh, 360px);
+        height: min(30vh, 320px);
     }
 
     .tab2-image-container.grid img {
-        height: min(26vh, 260px);
+        height: min(22vh, 240px);
     }
 
     .tab2-image-container.seq img {
-        height: min(60vh, 600px);
+        height: min(55vh, 540px);
     }
 }
 </style>
@@ -3634,6 +3673,13 @@ with tab1:
 with tab2:
     is_tab2_fullscreen = st.session_state.get("tab2_fullscreen_mode", False)
 
+    body_class = "tab2-fullscreen-mode" if is_tab2_fullscreen else "tab2-standard-mode"
+    st.markdown(
+        f"<script>document.body.classList.remove('tab2-fullscreen-mode','tab2-standard-mode');"
+        f"document.body.classList.add('{body_class}');</script>",
+        unsafe_allow_html=True,
+    )
+
     if not is_tab2_fullscreen:
         st.header(t("tab2_header"))
         st.caption(t("tab2_caption"))
@@ -3715,6 +3761,11 @@ with tab2:
         if not st.session_state.get("tab2_authenticated", False):
             st.info(t("tab2_choose_name_info"))
             tab2_can_continue = False
+
+    visual_wrapper_open = False
+    if tab2_can_continue:
+        st.markdown("<div class='tab2-visual-wrapper'><div class='tab2-visual-body'>", unsafe_allow_html=True)
+        visual_wrapper_open = True
 
     if tab2_can_continue:
         usuario_activo = st.session_state.get("tab2_user_name", "")
@@ -4075,7 +4126,8 @@ with tab2:
                 _complete_visual_experiment(usuario_activo)
                 _trigger_streamlit_rerun()
 
-
+    if visual_wrapper_open:
+        st.markdown("</div></div>", unsafe_allow_html=True)
 
 
 with tab_admin:
