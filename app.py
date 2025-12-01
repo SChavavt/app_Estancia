@@ -21,7 +21,6 @@ try:
 except Exception:
     WORLD_TIMESTAMPS = None
 import streamlit as st
-import streamlit.components.v1 as components
 from github import Github, GithubException
 
 # =========================================================
@@ -298,7 +297,6 @@ st.session_state.setdefault("tab2_smartscore_map", {})
 st.session_state.setdefault("tab2_smartscore_owner", "")
 st.session_state.setdefault("smart_scores", {})
 st.session_state.setdefault("tab2_name_query", "")
-st.session_state.setdefault("dom_aoi_results", {})
 st.session_state.setdefault("auto_assignment_feedback", None)
 VISUAL_MODE_OPTIONS = ["A/B", "Grid", "Sequential"]
 VISUAL_SUBFOLDERS = {"A/B": "A_B", "Grid": "Grid", "Sequential": "Sequential"}
@@ -668,17 +666,6 @@ def _ensure_tab2_smartscore_map(user_name: str) -> None:
         _set_tab2_smartscore_map(cleaned)
 
 
-def _display_label_for_image_stem(stem: str) -> str:
-    smartscore_map: dict[str, float] = st.session_state.get("tab2_smartscore_map", {})
-    entry = _find_smartscore_for_image(stem, smartscore_map)
-    if entry:
-        return entry[0]
-    alias = IMAGE_STEM_TO_PRODUCT.get(stem.casefold()) or IMAGE_STEM_TO_PRODUCT.get(stem)
-    if alias:
-        return alias
-    return stem.replace("_", " ")
-
-
 def _find_smartscore_for_image(
     stem: str, smartscore_map: dict[str, float]
 ) -> Optional[tuple[str, float]]:
@@ -917,7 +904,6 @@ def _reset_visual_experiment_state() -> None:
     st.session_state["experiment_result_path"] = ""
     st.session_state["experiment_result_df"] = pd.DataFrame()
     st.session_state["last_selection_feedback"] = ""
-    st.session_state["dom_aoi_results"] = {}
     st.session_state["experiment_start_time"] = None
     st.session_state["experiment_end_time"] = None
 
@@ -1812,7 +1798,6 @@ def _build_experiment_results(
     participant_group = user_group or st.session_state.get("tab2_user_group", "")
     smartscore_enabled = participant_group == "Con SmartScore"
     default_atn = {"tiempo": None, "fijaciones": None, "primera_mirada": None}
-    captured_dom_aois: dict = st.session_state.get("dom_aoi_results", {}) or {}
 
     product_name_cache: dict[str, str] = {}
 
@@ -2055,8 +2040,12 @@ def _build_experiment_results(
                 if display
             ]
 
-            screen_aois = captured_dom_aois.get(pantalla_id) or {}
-            aois = {pantalla_id: screen_aois} if screen_aois else {}
+            aois = obtener_aoi_layout(
+                modo=mode,
+                productos_visibles=productos_visibles,
+                producto_recomendado=producto_top_visible,
+                pantalla_id=pantalla_id,
+            )
 
             record = base_record.copy()
             record["Pantalla_mostrada"] = pantalla_layout
@@ -2280,158 +2269,42 @@ def _select_highest_smartscore_from_names(
 
 
 def _render_visual_image(
-    image_path: Path,
-    mode: str,
-    highlighted_product: Optional[str] = None,
-    screen_id: str = "",
-    display_label: Optional[str] = None,
-) -> list[str]:
-    aoi_keys: list[str] = []
+    image_path: Path, mode: str, highlighted_product: Optional[str] = None
+) -> None:
     mode_class = {"A/B": "ab", "Grid": "grid", "Sequential": "seq"}.get(mode, "grid")
-    display_value = display_label or image_path.stem.replace("_", " ")
-    caption = html.escape(display_value)
-    clean = re.sub(r"[^a-zA-Z0-9_]", "", display_value.lower().replace(" ", "_"))
-    pack_key = f"{clean}_pack"
-    aoi_screen_attr = (
-        f'data-aoi-screen="{html.escape(screen_id, quote=True)}"'
-        if screen_id
-        else ""
-    )
-    html_parts: list[str] = [f'<div class="tab2-image-container {mode_class}">']
-
-    encoded_img = base64.b64encode(image_path.read_bytes()).decode("utf-8")
-    ext = image_path.suffix.lower().lstrip(".") or "png"
-    if ext == "jpg":
-        ext = "jpeg"
-
-    html_parts.append(
-        f'<img src="data:image/{ext};base64,{encoded_img}" alt="{caption}" '
-        f'{aoi_screen_attr} data-aoi-key="{html.escape(pack_key, quote=True)}" />'
-    )
-    aoi_keys.append(pack_key)
+    image_bytes = image_path.read_bytes()
+    encoded = base64.b64encode(image_bytes).decode("utf-8")
+    extension = image_path.suffix.lower().lstrip(".") or "png"
+    if extension == "jpg":
+        extension = "jpeg"
+    caption = html.escape(image_path.stem.replace("_", " "))
     smartscore_html = ""
     grupo = st.session_state.get("tab2_user_group", "")
-    mostrar_smartcore = grupo == "Con SmartScore"
+    mostrar_smartscore = grupo == "Con SmartScore"
 
-    if mostrar_smartcore:
+    if mostrar_smartscore:
         smartscore_map: dict[str, float] = st.session_state.get("tab2_smartscore_map", {})
         smartscore_entry = _find_smartscore_for_image(image_path.stem, smartscore_map)
         if smartscore_entry and highlighted_product and (
             smartscore_entry[0] == highlighted_product
         ):
             _, score_value = smartscore_entry
-            smartcore_key = f"{clean}_smartcore"
             smartscore_html = (
-                f'<div class="aoi-smartcore" {aoi_screen_attr} '
-                f'data-aoi-key="{html.escape(smartcore_key, quote=True)}">'
-                '<div class="smartscore-label">'
-                '<span class="smartscore-star" aria-hidden="true">⭐</span>'
-                f'<span class="smartscore-text">{t("smartscore_recommended", score=score_value * 100)}</span>'
-                '</div>'
-                '</div>'
+                "<div class=\"smartscore-label\">"
+                "<span class=\"smartscore-star\" aria-hidden=\"true\">⭐</span>"
+                f"<span class=\"smartscore-text\">{t('smartscore_recommended', score=score_value * 100)}</span>"
+                "</div>"
             )
-            aoi_keys.append(smartcore_key)
-    html_parts.append(f'<p class="tab2-image-caption">{caption}</p>')
-    if smartscore_html:
-        html_parts.append(smartscore_html)
-    html_parts.append("</div>")
-    st.markdown("".join(html_parts), unsafe_allow_html=True)
-    return aoi_keys
-
-def _store_dom_aoi_payload(payload: Any) -> None:
-    if not isinstance(payload, dict):
-        return
-    screen_id = str(
-        payload.get("Pantalla_ID")
-        or payload.get("screen_id")
-        or payload.get("id")
-        or payload.get("pantalla_id")
-        or ""
-    ).strip()
-    boxes = payload.get("AOIs") or payload.get("aoi_boxes") or payload.get("boxes")
-    if not screen_id or not isinstance(boxes, dict):
-        return
-
-    cleaned: dict[str, list[float]] = {}
-    for key, coords in boxes.items():
-        if not isinstance(coords, (list, tuple)) or len(coords) < 4:
-            continue
-        try:
-            x1, y1, x2, y2 = [float(value) for value in coords[:4]]
-        except (TypeError, ValueError):
-            continue
-        cleaned[str(key)] = [x1, y1, x2, y2]
-
-    if not cleaned:
-        return
-
-    stored = st.session_state.get("dom_aoi_results", {}) or {}
-    stored[screen_id] = cleaned
-    st.session_state["dom_aoi_results"] = stored
-
-
-def _render_aoi_capture_component(screen_id: str, expected_keys: list[str]) -> None:
-    if not screen_id:
-        return
-
-    unique_keys = sorted({str(key) for key in expected_keys if key})
-    screen_json = json.dumps(screen_id)
-    expected_json = json.dumps(unique_keys)
-    script = """
-    <script>
-    const Streamlit = window.parent.Streamlit || window.Streamlit;
-    const screenId = {screen};
-    const expected = {expected};
-    const cssEscape = (window.CSS && CSS.escape) ? CSS.escape : (value => value);
-
-    const collectAOIs = () => {{
-        const entries = {{ }};
-        const selectors = expected.length
-            ? expected.map(key => `[data-aoi-screen='${{screenId}}'][data-aoi-key='${{cssEscape(key)}}']`)
-            : [`[data-aoi-screen='${{screenId}}'][data-aoi-key]`];
-
-        const elements = new Set();
-        selectors.forEach(selector => {{
-            document.querySelectorAll(selector).forEach(el => elements.add(el));
-        }});
-
-        elements.forEach(el => {{
-            const key = el.getAttribute('data-aoi-key');
-            if (!key) return;
-            const rect = el.getBoundingClientRect();
-            entries[key] = [rect.left, rect.top, rect.right, rect.bottom];
-        }});
-
-        const payload = {{ Pantalla_ID: screenId, AOIs: entries }};
-        if (Streamlit && Streamlit.setComponentValue) {{
-            Streamlit.setComponentValue(payload);
-        }}
-    }};
-
-    const debounce = (fn, delay = 120) => {{
-        let timeout;
-        return (...args) => {{
-            window.clearTimeout(timeout);
-            timeout = window.setTimeout(() => fn(...args), delay);
-        }};
-    }}
-
-    const send = debounce(collectAOIs, 60);
-    send();
-    window.addEventListener('load', send);
-    window.addEventListener('resize', send);
-    window.addEventListener('scroll', send, true);
-    </script>
-    """.format(screen=screen_json, expected=expected_json)
-
-    payload = components.html(
-        script,
-        height=1,   # necesario: height nunca puede ser 0
-        width=1,
-        scrolling=False,
-        key=f"dom_aoi_capture_{screen_id}_{len(unique_keys)}",
+    st.markdown(
+        f"""
+        <div class="tab2-image-container {mode_class}">
+            <img src="data:image/{extension};base64,{encoded}" alt="{caption}" />
+            <p class="tab2-image-caption">{caption}</p>
+            {smartscore_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
-    _store_dom_aoi_payload(payload)
 
 
 def _df_to_excel_bytes(df: pd.DataFrame) -> bytes:
@@ -3947,9 +3820,6 @@ with tab2:
 
         st.markdown(TAB2_IMAGE_STYLES, unsafe_allow_html=True)
 
-        expected_aoi_keys: list[str] = []
-        current_screen_id = ""
-
         if not images:
             st.warning(t("tab2_no_images_warning"))
         else:
@@ -3958,13 +3828,6 @@ with tab2:
                     st.warning(t("tab2_need_four_images_ab"))
                 else:
                     display_indexes = _get_ab_display_indexes(current_state)
-                    current_screen_id = (
-                        "A/B-Final"
-                        if ab_stage >= 2
-                        else "A/B-Par2"
-                        if ab_stage == 1
-                        else "A/B-Par1"
-                    )
                     visible_paths: list[Path] = [
                         images[image_index]
                         for image_index in display_indexes
@@ -3990,18 +3853,9 @@ with tab2:
                             if not (0 <= image_index < len(images)):
                                 continue
                             image_path = images[image_index]
-                            display_label = _display_label_for_image_stem(
-                                image_path.stem
-                            )
                             with col:
-                                expected_aoi_keys.extend(
-                                    _render_visual_image(
-                                        image_path,
-                                        current_mode,
-                                        highlighted_product,
-                                        screen_id=current_screen_id,
-                                        display_label=display_label,
-                                    )
+                                _render_visual_image(
+                                    image_path, current_mode, highlighted_product
                                 )
                                 if current_state.get("selected") == image_path.stem:
                                     st.caption(t("tab2_selected_label"))
@@ -4016,9 +3870,6 @@ with tab2:
                                         image_path.stem
                                     )
                                     _trigger_streamlit_rerun()
-                        _render_aoi_capture_component(
-                            current_screen_id, expected_aoi_keys
-                        )
             elif current_mode == "Grid":
                 if len(images) < 2:
                     st.warning(t("tab2_need_two_images_grid"))
@@ -4029,7 +3880,6 @@ with tab2:
                             if image_path.stem == recommended_stem:
                                 highlighted_product = recommended_display
                                 break
-                    current_screen_id = "Grid-1"
                     current_state["producto_recomendado"] = highlighted_product
                     mode_sessions[current_mode] = current_state
                     st.session_state["mode_sessions"] = mode_sessions
@@ -4039,17 +3889,8 @@ with tab2:
                             zip(columns, images[start : start + 2])
                         ):
                             with col:
-                                display_label = _display_label_for_image_stem(
-                                    image_path.stem
-                                )
-                                expected_aoi_keys.extend(
-                                    _render_visual_image(
-                                        image_path,
-                                        current_mode,
-                                        highlighted_product,
-                                        screen_id=current_screen_id,
-                                        display_label=display_label,
-                                    )
+                                _render_visual_image(
+                                    image_path, current_mode, highlighted_product
                                 )
                                 if current_state.get("selected") == image_path.stem:
                                     st.caption(t("tab2_selected_label"))
@@ -4062,9 +3903,6 @@ with tab2:
                                     )
                                     st.session_state["last_selection_feedback"] = image_path.stem
                                     _trigger_streamlit_rerun()
-                    _render_aoi_capture_component(
-                        current_screen_id, expected_aoi_keys
-                    )
             else:
                 total_images = len(images)
                 index = current_state.get("navigation_index", 0)
@@ -4083,19 +3921,8 @@ with tab2:
                 mode_sessions[current_mode] = current_state
                 st.session_state["mode_sessions"] = mode_sessions
 
-                current_screen_id = "Seq-1"
-                display_label = _display_label_for_image_stem(current_image.stem)
-                expected_aoi_keys.extend(
-                    _render_visual_image(
-                        current_image,
-                        current_mode,
-                        highlighted_product,
-                        screen_id=current_screen_id,
-                        display_label=display_label,
-                    )
-                )
-                _render_aoi_capture_component(
-                    current_screen_id, expected_aoi_keys
+                _render_visual_image(
+                    current_image, current_mode, highlighted_product
                 )
 
                 prev_clicked = False
