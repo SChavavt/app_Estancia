@@ -375,15 +375,15 @@ TAB2_IMAGE_STYLES = """
 
 
 .tab2-image-container.ab img {
-    height: min(40vh, 420px);
+    height: min(36vh, 360px);
 }
 
 .tab2-image-container.grid img {
-    height: min(28vh, 320px);
+    height: min(24vh, 300px);
 }
 
 .tab2-image-container.seq img {
-    height: min(70vh, 700px);
+    height: min(60vh, 620px);
 }
 
 .tab2-image-container.seq + div[data-testid="stHorizontalBlock"] {
@@ -448,6 +448,36 @@ TAB2_IMAGE_STYLES = """
     .tab2-image-container.seq img {
         height: min(60vh, 600px);
     }
+}
+</style>
+"""
+
+TAB2_FULLSCREEN_STYLES = """
+<style>
+html, body, [data-testid="stAppViewContainer"] {
+    height: 100vh;
+    overflow: hidden !important;
+}
+
+[data-testid="stAppViewContainer"] > .main,
+.block-container {
+    height: 100vh;
+    overflow: hidden;
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+}
+
+.tab2-fullscreen-wrap {
+    height: calc(100vh - 1rem);
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    overflow: hidden;
+}
+
+.tab2-fullscreen-wrap [data-testid="stHorizontalBlock"],
+.tab2-fullscreen-wrap [data-testid="stVerticalBlock"] {
+    align-items: stretch;
 }
 </style>
 """
@@ -3633,6 +3663,12 @@ with tab1:
 
 with tab2:
     is_tab2_fullscreen = st.session_state.get("tab2_fullscreen_mode", False)
+    fullscreen_wrapper_open = False
+
+    if is_tab2_fullscreen:
+        st.markdown(TAB2_FULLSCREEN_STYLES, unsafe_allow_html=True)
+        st.markdown("<div class='tab2-fullscreen-wrap'>", unsafe_allow_html=True)
+        fullscreen_wrapper_open = True
 
     if not is_tab2_fullscreen:
         st.header(t("tab2_header"))
@@ -4074,6 +4110,10 @@ with tab2:
             ):
                 _complete_visual_experiment(usuario_activo)
                 _trigger_streamlit_rerun()
+
+
+    if fullscreen_wrapper_open:
+        st.markdown("</div>", unsafe_allow_html=True)
 
 
 
