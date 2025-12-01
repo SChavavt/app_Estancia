@@ -225,13 +225,18 @@ GENDER_LABELS = {
 
 st.session_state.setdefault("language", DEFAULT_LANGUAGE)
 
-language_index = LANGUAGE_OPTIONS.index(st.session_state["language"])
-selected_language = st.selectbox(
-    "Choose language / Escoge idioma",
-    options=LANGUAGE_OPTIONS,
-    index=language_index,
-)
-st.session_state["language"] = selected_language
+show_global_language = not st.session_state.get("tab2_authenticated", False)
+
+if show_global_language:
+    language_index = LANGUAGE_OPTIONS.index(st.session_state["language"])
+    selected_language = st.selectbox(
+        "Choose language / Escoge idioma",
+        options=LANGUAGE_OPTIONS,
+        index=language_index,
+    )
+    st.session_state["language"] = selected_language
+else:
+    selected_language = st.session_state["language"]
 
 
 def t(key: str, **kwargs) -> str:
@@ -239,9 +244,10 @@ def t(key: str, **kwargs) -> str:
     return text.format(**kwargs)
 
 
-st.title(t("page_header"))
-st.caption(t("page_caption"))
-st.markdown(t("intro_text"))
+if show_global_language:
+    st.title(t("page_header"))
+    st.caption(t("page_caption"))
+    st.markdown(t("intro_text"))
 
 DATA_FILES = {
     "Instant Noodles": "data/Productos_Instant_Noodles_SmartScore.xlsx",
