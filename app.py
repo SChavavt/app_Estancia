@@ -224,14 +224,34 @@ GENDER_LABELS = {
 }
 
 st.session_state.setdefault("language", DEFAULT_LANGUAGE)
+hide_global_intro = st.session_state.get("tab2_fullscreen_mode", False)
+
+FULLSCREEN_EXPERIMENT_STYLES = """
+<style>
+body {
+    overflow: hidden;
+}
+
+.main .block-container {
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+    min-height: 100vh;
+}
+
+.main .block-container div[data-testid="stVerticalBlock"] > div:first-child {
+    margin-top: 0;
+}
+</style>
+"""
 
 language_index = LANGUAGE_OPTIONS.index(st.session_state["language"])
-selected_language = st.selectbox(
-    "Choose language / Escoge idioma",
-    options=LANGUAGE_OPTIONS,
-    index=language_index,
-)
-st.session_state["language"] = selected_language
+if not hide_global_intro:
+    selected_language = st.selectbox(
+        "Choose language / Escoge idioma",
+        options=LANGUAGE_OPTIONS,
+        index=language_index,
+    )
+    st.session_state["language"] = selected_language
 
 
 def t(key: str, **kwargs) -> str:
@@ -239,9 +259,12 @@ def t(key: str, **kwargs) -> str:
     return text.format(**kwargs)
 
 
-st.title(t("page_header"))
-st.caption(t("page_caption"))
-st.markdown(t("intro_text"))
+if hide_global_intro:
+    st.markdown(FULLSCREEN_EXPERIMENT_STYLES, unsafe_allow_html=True)
+else:
+    st.title(t("page_header"))
+    st.caption(t("page_caption"))
+    st.markdown(t("intro_text"))
 
 DATA_FILES = {
     "Instant Noodles": "data/Productos_Instant_Noodles_SmartScore.xlsx",
@@ -297,6 +320,7 @@ st.session_state.setdefault("tab2_smartscore_map", {})
 st.session_state.setdefault("tab2_smartscore_owner", "")
 st.session_state.setdefault("smart_scores", {})
 st.session_state.setdefault("tab2_name_query", "")
+st.session_state.setdefault("tab2_fullscreen_mode", False)
 st.session_state.setdefault("auto_assignment_feedback", None)
 VISUAL_MODE_OPTIONS = ["A/B", "Grid", "Sequential"]
 VISUAL_SUBFOLDERS = {"A/B": "A_B", "Grid": "Grid", "Sequential": "Sequential"}
@@ -3610,12 +3634,14 @@ with tab2:
         st.session_state["tab2_user_name"] = ""
         st.session_state["tab2_user_id"] = ""
         st.session_state["tab2_user_group"] = ""
+        st.session_state["tab2_fullscreen_mode"] = False
         _set_tab2_smartscore_map("")
 
     if not registered_names:
         st.info(t("tab2_requires_response_info"))
         _set_tab2_smartscore_map("")
         tab2_can_continue = False
+        st.session_state["tab2_fullscreen_mode"] = False
 
     if tab2_can_continue and not st.session_state.get("tab2_authenticated", False):
         name_query = st.text_input(
@@ -3657,6 +3683,7 @@ with tab2:
                 grupo = participant_group
             st.session_state["tab2_user_id"] = persona_id
             st.session_state["tab2_user_group"] = grupo
+            st.session_state["tab2_fullscreen_mode"] = True
             _reset_visual_experiment_state()
             _set_tab2_smartscore_map(selected_name)
             st.session_state["experiment_start_time"] = datetime.now()
@@ -3679,6 +3706,7 @@ with tab2:
             st.session_state["tab2_user_name"] = ""
             st.session_state["tab2_user_id"] = ""
             st.session_state["tab2_user_group"] = ""
+            st.session_state["tab2_fullscreen_mode"] = False
             _reset_visual_experiment_state()
             _set_tab2_smartscore_map("")
             _trigger_streamlit_rerun()
