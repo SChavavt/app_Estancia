@@ -2341,9 +2341,9 @@ def _render_visual_image(
             smartscore_html = (
                 f'<div class="aoi-smartcore" {aoi_screen_attr} '
                 f'data-aoi-key="{html.escape(smartcore_key, quote=True)}">'
-                "<div class="smartscore-label">"
-                "<span class="smartscore-star" aria-hidden="true">⭐</span>"
-                f"<span class="smartscore-text">{t('smartscore_recommended', score=score_value * 100)}</span>"
+                "<div class='smartscore-label'>"
+                "<span class='smartscore-star' aria-hidden='true'>⭐</span>"
+                f"<span class='smartscore-text'>{t('smartscore_recommended', score=score_value * 100)}</span>"
                 "</div>"
                 "</div>"
             )
