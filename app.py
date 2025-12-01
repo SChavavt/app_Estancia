@@ -3597,8 +3597,11 @@ with tab1:
     st.markdown("---")
 
 with tab2:
-    st.header(t("tab2_header"))
-    st.caption(t("tab2_caption"))
+    tab2_header_visible = not st.session_state.get("tab2_authenticated", False)
+
+    if tab2_header_visible:
+        st.header(t("tab2_header"))
+        st.caption(t("tab2_caption"))
 
     registered_names, names_error = _load_registered_names(Path(RESULTS_PATH_IN_REPO))
 
@@ -3667,7 +3670,6 @@ with tab2:
             _set_tab2_smartscore_map(selected_name)
             st.session_state["experiment_start_time"] = datetime.now()
             st.session_state["experiment_end_time"] = None
-            _trigger_streamlit_rerun()
         elif start_clicked and not selected_name:
             st.error(t("tab2_name_required_error"))
 
@@ -3678,7 +3680,7 @@ with tab2:
     if tab2_can_continue:
         usuario_activo = st.session_state.get("tab2_user_name", "")
         _ensure_tab2_smartscore_map(usuario_activo)
-        st.success(t("tab2_logged_in_as", user=usuario_activo))
+        st.caption(t("tab2_logged_in_as", user=usuario_activo))
 
         if st.button(t("tab2_switch_user"), key="tab2_logout"):
             st.session_state["tab2_authenticated"] = False
@@ -3687,7 +3689,6 @@ with tab2:
             st.session_state["tab2_user_group"] = ""
             _reset_visual_experiment_state()
             _set_tab2_smartscore_map("")
-            _trigger_streamlit_rerun()
 
         sequence = st.session_state.get("mode_sequence", [])
     else:
@@ -3740,7 +3741,11 @@ with tab2:
                 _reset_visual_experiment_state()
                 st.session_state["experiment_start_time"] = datetime.now()
                 st.session_state["experiment_end_time"] = None
-                _trigger_streamlit_rerun()
+                st.session_state["tab2_authenticated"] = False
+                st.session_state["tab2_user_name"] = ""
+                st.session_state["tab2_user_id"] = ""
+                st.session_state["tab2_user_group"] = ""
+                _set_tab2_smartscore_map("")
 
             tab2_can_continue = False
 
