@@ -2288,21 +2288,44 @@ def _render_visual_image(
 ) -> list[str]:
     aoi_keys: list[str] = []
     mode_class = {"A/B": "ab", "Grid": "grid", "Sequential": "seq"}.get(mode, "grid")
-    image_bytes = image_path.read_bytes()
-    encoded = base64.b64encode(image_bytes).decode("utf-8")
-    extension = image_path.suffix.lower().lstrip(".") or "png"
-    if extension == "jpg":
-        extension = "jpeg"
     caption = html.escape(image_path.stem.replace("_", " "))
     display_value = display_label or image_path.stem.replace("_", " ")
+    clean = re.sub(r"[^a-zA-Z0-9_]", "", display_value.lower().replace(" ", "_"))
+    pack_key = f"{clean}_pack"
     aoi_screen_attr = (
         f'data-aoi-screen="{html.escape(screen_id, quote=True)}"'
         if screen_id
         else ""
     )
-    pack_key = f"{display_value}_pack"
-    pack_attr = html.escape(pack_key, quote=True)
-    aoi_keys.append(pack_key)
+    pack_path = image_path.parent / f"{image_path.stem}_pack.png"
+    claim_path = image_path.parent / f"{image_path.stem}_claim.png"
+    nutri_path = image_path.parent / f"{image_path.stem}_nutri.png"
+    html_parts: list[str] = [f'<div class="tab2-image-container {mode_class}">']
+
+    def _encode_image(path: Path) -> tuple[str, str]:
+        bytes_img = path.read_bytes()
+        encoded_img = base64.b64encode(bytes_img).decode("utf-8")
+        return encoded_img, path.suffix.lower().lstrip(".") or "png"
+
+    def _add_image_block(path: Path, key: str) -> None:
+        if not path.exists():
+            return
+        encoded_img, ext = _encode_image(path)
+        if ext == "jpg":
+            ext = "jpeg"
+        html_parts.append(
+            f'<div class="aoi-box" {aoi_screen_attr} data-aoi-key="{html.escape(key, quote=True)}">'
+            f'<img src="data:image/{ext};base64,{encoded_img}" alt="{caption}" />'
+            "</div>"
+        )
+        aoi_keys.append(key)
+
+    _add_image_block(pack_path, pack_key)
+    claim_key = f"{clean}_claim"
+    _add_image_block(claim_path, claim_key)
+    if mode == "Sequential":
+        nutri_key = f"{clean}_nutri"
+        _add_image_block(nutri_path, nutri_key)
     smartscore_html = ""
     grupo = st.session_state.get("tab2_user_group", "")
     mostrar_smartcore = grupo == "Con SmartScore"
@@ -2314,24 +2337,22 @@ def _render_visual_image(
             smartscore_entry[0] == highlighted_product
         ):
             _, score_value = smartscore_entry
-            smartcore_key = f"{display_value}_smartcore"
+            smartcore_key = f"{clean}_smartcore"
             smartscore_html = (
-                f"<div class=\"smartscore-label\" data-aoi-screen=\"{html.escape(screen_id, quote=True)}\" "
-                f"data-aoi-key=\"{html.escape(smartcore_key, quote=True)}\">"
-                "<span class=\"smartscore-star\" aria-hidden=\"true\">⭐</span>"
-                f"<span class=\"smartscore-text\">{t('smartscore_recommended', score=score_value * 100)}</span>"
+                f'<div class="aoi-smartcore" {aoi_screen_attr} '
+                f'data-aoi-key="{html.escape(smartcore_key, quote=True)}">'
+                "<div class="smartscore-label">"
+                "<span class="smartscore-star" aria-hidden="true">⭐</span>"
+                f"<span class="smartscore-text">{t('smartscore_recommended', score=score_value * 100)}</span>"
+                "</div>"
                 "</div>"
             )
             aoi_keys.append(smartcore_key)
-    html_block = (
-        f'<div class="tab2-image-container {mode_class}">'
-        f'<img src="data:image/{extension};base64,{encoded}" alt="{caption}" '
-        f'data-aoi-key="{pack_attr}" {aoi_screen_attr} />'
-        f'<p class="tab2-image-caption">{caption}</p>'
-        f"{smartscore_html}"
-        "</div>"
-    )
-    st.markdown(html_block, unsafe_allow_html=True)
+    html_parts.append(f'<p class="tab2-image-caption">{caption}</p>')
+    if smartscore_html:
+        html_parts.append(smartscore_html)
+    html_parts.append("</div>")
+    st.markdown("".join(html_parts), unsafe_allow_html=True)
     return aoi_keys
 
 def _store_dom_aoi_payload(payload: Any) -> None:
@@ -2370,7 +2391,7 @@ def _render_aoi_capture_component(screen_id: str, expected_keys: list[str]) -> N
     if not screen_id:
         return
 
-    unique_keys = sorted({key for key in expected_keys if key})
+    unique_keys = sorted({str(key) for key in expected_keys if key})
     screen_json = json.dumps(screen_id)
     expected_json = json.dumps(unique_keys)
     script = """
