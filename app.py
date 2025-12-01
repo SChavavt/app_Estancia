@@ -2378,51 +2378,51 @@ def _render_aoi_capture_component(screen_id: str, expected_keys: list[str]) -> N
     screen_json = json.dumps(screen_id)
     expected_json = json.dumps(unique_keys)
     script = """
-    <script>
-    const Streamlit = window.parent.Streamlit || window.Streamlit;
-    const screenId = {screen};
-    const expected = {expected};
-    const cssEscape = (window.CSS && CSS.escape) ? CSS.escape : (value => value);
+<script>
+const Streamlit = window.parent.Streamlit || window.Streamlit;
+const screenId = {screen};
+const expected = {expected};
+const cssEscape = (window.CSS && CSS.escape) ? CSS.escape : (value => value);
 
-    const collectAOIs = () => {{
-        const entries = {{ }};
-        const selectors = expected.length
-            ? expected.map(key => `[data-aoi-screen='${{screenId}}'][data-aoi-key='${{cssEscape(key)}}']`)
-            : [`[data-aoi-screen='${{screenId}}'][data-aoi-key]`];
+const collectAOIs = () => {{
+    const entries = {{ }};
+    const selectors = expected.length
+        ? expected.map(key => `[data-aoi-screen='${{screenId}}'][data-aoi-key='${{cssEscape(key)}}']`)
+        : [`[data-aoi-screen='${{screenId}}'][data-aoi-key]`];
 
-        const elements = new Set();
-        selectors.forEach(selector => {{
-            document.querySelectorAll(selector).forEach(el => elements.add(el));
-        }});
+    const elements = new Set();
+    selectors.forEach(selector => {{
+        document.querySelectorAll(selector).forEach(el => elements.add(el));
+    }});
 
-        elements.forEach(el => {{
-            const key = el.getAttribute('data-aoi-key');
-            if (!key) return;
-            const rect = el.getBoundingClientRect();
-            entries[key] = [rect.left, rect.top, rect.right, rect.bottom];
-        }});
+    elements.forEach(el => {{
+        const key = el.getAttribute('data-aoi-key');
+        if (!key) return;
+        const rect = el.getBoundingClientRect();
+        entries[key] = [rect.left, rect.top, rect.right, rect.bottom];
+    }});
 
-        const payload = {{ Pantalla_ID: screenId, AOIs: entries }};
-        if (Streamlit && Streamlit.setComponentValue) {{
-            Streamlit.setComponentValue(payload);
-        }}
-    }};
-
-    const debounce = (fn, delay = 120) => {{
-        let timeout;
-        return (...args) => {{
-            window.clearTimeout(timeout);
-            timeout = window.setTimeout(() => fn(...args), delay);
-        }};
+    const payload = {{ Pantalla_ID: screenId, AOIs: entries }};
+    if (Streamlit && Streamlit.setComponentValue) {{
+        Streamlit.setComponentValue(payload);
     }}
+}};
 
-    const send = debounce(collectAOIs, 60);
-    send();
-    window.addEventListener('load', send);
-    window.addEventListener('resize', send);
-    window.addEventListener('scroll', send, true);
-    </script>
-    """.format(screen=screen_json, expected=expected_json)
+const debounce = (fn, delay = 120) => {{
+    let timeout;
+    return (...args) => {{
+        window.clearTimeout(timeout);
+        timeout = window.setTimeout(() => fn(...args), delay);
+    }};
+}}
+
+const send = debounce(collectAOIs, 60);
+send();
+window.addEventListener('load', send);
+window.addEventListener('resize', send);
+window.addEventListener('scroll', send, true);
+</script>
+""".format(screen=screen_json, expected=expected_json)
 
     payload = components.html(
         script,
