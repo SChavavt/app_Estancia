@@ -2387,14 +2387,11 @@ def _store_dom_aoi_payload(payload: Any) -> None:
     st.session_state["dom_aoi_results"] = stored
 
 
-def _render_aoi_capture_component(
-    screen_id: str, expected_keys: Optional[list[str]]
-) -> None:
+def _render_aoi_capture_component(screen_id: str, expected_keys: list[str]) -> None:
     if not screen_id:
         return
 
-    safe_expected_keys = expected_keys or []
-    unique_keys = sorted({str(key) for key in safe_expected_keys if key})
+    unique_keys = sorted({str(key) for key in expected_keys if key})
     screen_json = json.dumps(screen_id)
     expected_json = json.dumps(unique_keys)
     script = """
