@@ -3667,7 +3667,6 @@ with tab2:
             _set_tab2_smartscore_map(selected_name)
             st.session_state["experiment_start_time"] = datetime.now()
             st.session_state["experiment_end_time"] = None
-            _trigger_streamlit_rerun()
         elif start_clicked and not selected_name:
             st.error(t("tab2_name_required_error"))
 
@@ -3740,7 +3739,6 @@ with tab2:
                 _reset_visual_experiment_state()
                 st.session_state["experiment_start_time"] = datetime.now()
                 st.session_state["experiment_end_time"] = None
-                _trigger_streamlit_rerun()
 
             tab2_can_continue = False
 
@@ -4029,7 +4027,6 @@ with tab2:
                 and not st.session_state.get("experiment_completed")
             ):
                 _complete_visual_experiment(usuario_activo)
-                _trigger_streamlit_rerun()
 
 
 
