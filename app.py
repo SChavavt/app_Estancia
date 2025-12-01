@@ -2426,8 +2426,9 @@ def _render_aoi_capture_component(screen_id: str, expected_keys: list[str]) -> N
 
     payload = components.html(
         script,
-        height=0,
-        width=0,
+        height=1,   # necesario: height nunca puede ser 0
+        width=1,
+        scrolling=False,
         key=f"dom_aoi_capture_{screen_id}_{len(unique_keys)}",
     )
     _store_dom_aoi_payload(payload)
