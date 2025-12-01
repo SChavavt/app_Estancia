@@ -293,6 +293,7 @@ st.session_state.setdefault("success_path", "")
 st.session_state.setdefault("trigger_balloons", False)
 st.session_state.setdefault("_reset_form_requested", False)
 st.session_state.setdefault("visual_log", [])
+st.session_state.setdefault("main_tabs", t("tab1_title"))
 st.session_state.setdefault("tab2_authenticated", False)
 st.session_state.setdefault("tab2_user_name", "")
 st.session_state.setdefault("tab1_persona_id", "")
@@ -3320,13 +3321,13 @@ def asignar_grupos_experimentales():
 # =========================================================
 # INTERFACES
 # =========================================================
-tab1, tab2, tab_admin = st.tabs(
-    [
-        t("tab1_title"),
-        t("tab2_title"),
-        "🛠️ Admin",
-    ]
-)
+tab_labels = [
+    t("tab1_title"),
+    t("tab2_title"),
+    "🛠️ Admin",
+]
+
+tab1, tab2, tab_admin = st.tabs(tab_labels, key="main_tabs")
 
 with tab1:
     _apply_reset_form_state()
@@ -3655,6 +3656,7 @@ with tab2:
         )
 
         if start_clicked and selected_name:
+            st.session_state["main_tabs"] = t("tab2_title")
             st.session_state["tab2_authenticated"] = True
             st.session_state["tab2_user_name"] = selected_name
             participant_id, participant_group = _lookup_participant_metadata(selected_name)
