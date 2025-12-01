@@ -2288,8 +2288,8 @@ def _render_visual_image(
 ) -> list[str]:
     aoi_keys: list[str] = []
     mode_class = {"A/B": "ab", "Grid": "grid", "Sequential": "seq"}.get(mode, "grid")
-    caption = html.escape(image_path.stem.replace("_", " "))
     display_value = display_label or image_path.stem.replace("_", " ")
+    caption = html.escape(display_value)
     clean = re.sub(r"[^a-zA-Z0-9_]", "", display_value.lower().replace(" ", "_"))
     pack_key = f"{clean}_pack"
     aoi_screen_attr = (
@@ -2297,35 +2297,18 @@ def _render_visual_image(
         if screen_id
         else ""
     )
-    pack_path = image_path.parent / f"{image_path.stem}_pack.png"
-    claim_path = image_path.parent / f"{image_path.stem}_claim.png"
-    nutri_path = image_path.parent / f"{image_path.stem}_nutri.png"
     html_parts: list[str] = [f'<div class="tab2-image-container {mode_class}">']
 
-    def _encode_image(path: Path) -> tuple[str, str]:
-        bytes_img = path.read_bytes()
-        encoded_img = base64.b64encode(bytes_img).decode("utf-8")
-        return encoded_img, path.suffix.lower().lstrip(".") or "png"
+    encoded_img = base64.b64encode(image_path.read_bytes()).decode("utf-8")
+    ext = image_path.suffix.lower().lstrip(".") or "png"
+    if ext == "jpg":
+        ext = "jpeg"
 
-    def _add_image_block(path: Path, key: str) -> None:
-        if not path.exists():
-            return
-        encoded_img, ext = _encode_image(path)
-        if ext == "jpg":
-            ext = "jpeg"
-        html_parts.append(
-            f'<div class="aoi-box" {aoi_screen_attr} data-aoi-key="{html.escape(key, quote=True)}">'
-            f'<img src="data:image/{ext};base64,{encoded_img}" alt="{caption}" />'
-            "</div>"
-        )
-        aoi_keys.append(key)
-
-    _add_image_block(pack_path, pack_key)
-    claim_key = f"{clean}_claim"
-    _add_image_block(claim_path, claim_key)
-    if mode == "Sequential":
-        nutri_key = f"{clean}_nutri"
-        _add_image_block(nutri_path, nutri_key)
+    html_parts.append(
+        f'<img src="data:image/{ext};base64,{encoded_img}" alt="{caption}" '
+        f'{aoi_screen_attr} data-aoi-key="{html.escape(pack_key, quote=True)}" />'
+    )
+    aoi_keys.append(pack_key)
     smartscore_html = ""
     grupo = st.session_state.get("tab2_user_group", "")
     mostrar_smartcore = grupo == "Con SmartScore"
