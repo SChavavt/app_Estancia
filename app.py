@@ -2387,8 +2387,8 @@ def _render_aoi_capture_component(screen_id: str, expected_keys: list[str]) -> N
     const collectAOIs = () => {{
         const entries = {{ }};
         const selectors = expected.length
-            ? expected.map(key => `[data-aoi-screen='${screenId}'][data-aoi-key='${cssEscape(key)}']`)
-            : [`[data-aoi-screen='${screenId}'][data-aoi-key]`];
+            ? expected.map(key => `[data-aoi-screen='${{screenId}}'][data-aoi-key='${{cssEscape(key)}}']`)
+            : [`[data-aoi-screen='${{screenId}}'][data-aoi-key]`];
 
         const elements = new Set();
         selectors.forEach(selector => {{
