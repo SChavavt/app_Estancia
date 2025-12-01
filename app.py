@@ -4,7 +4,6 @@ import json
 import random
 import base64
 import html
-import inspect
 import threading
 import time
 import unicodedata
@@ -226,18 +225,13 @@ GENDER_LABELS = {
 
 st.session_state.setdefault("language", DEFAULT_LANGUAGE)
 
-show_global_language = not st.session_state.get("tab2_authenticated", False)
-
-if show_global_language:
-    language_index = LANGUAGE_OPTIONS.index(st.session_state["language"])
-    selected_language = st.selectbox(
-        "Choose language / Escoge idioma",
-        options=LANGUAGE_OPTIONS,
-        index=language_index,
-    )
-    st.session_state["language"] = selected_language
-else:
-    selected_language = st.session_state["language"]
+language_index = LANGUAGE_OPTIONS.index(st.session_state["language"])
+selected_language = st.selectbox(
+    "Choose language / Escoge idioma",
+    options=LANGUAGE_OPTIONS,
+    index=language_index,
+)
+st.session_state["language"] = selected_language
 
 
 def t(key: str, **kwargs) -> str:
@@ -245,10 +239,9 @@ def t(key: str, **kwargs) -> str:
     return text.format(**kwargs)
 
 
-if show_global_language:
-    st.title(t("page_header"))
-    st.caption(t("page_caption"))
-    st.markdown(t("intro_text"))
+st.title(t("page_header"))
+st.caption(t("page_caption"))
+st.markdown(t("intro_text"))
 
 DATA_FILES = {
     "Instant Noodles": "data/Productos_Instant_Noodles_SmartScore.xlsx",
@@ -294,7 +287,6 @@ st.session_state.setdefault("success_path", "")
 st.session_state.setdefault("trigger_balloons", False)
 st.session_state.setdefault("_reset_form_requested", False)
 st.session_state.setdefault("visual_log", [])
-st.session_state.setdefault("main_tabs", t("tab1_title"))
 st.session_state.setdefault("tab2_authenticated", False)
 st.session_state.setdefault("tab2_user_name", "")
 st.session_state.setdefault("tab1_persona_id", "")
@@ -3322,17 +3314,13 @@ def asignar_grupos_experimentales():
 # =========================================================
 # INTERFACES
 # =========================================================
-tab_labels = [
-    t("tab1_title"),
-    t("tab2_title"),
-    "🛠️ Admin",
-]
-
-_tabs_support_key = "key" in inspect.signature(st.tabs).parameters
-if _tabs_support_key:
-    tab1, tab2, tab_admin = st.tabs(tab_labels, key="main_tabs")
-else:
-    tab1, tab2, tab_admin = st.tabs(tab_labels)
+tab1, tab2, tab_admin = st.tabs(
+    [
+        t("tab1_title"),
+        t("tab2_title"),
+        "🛠️ Admin",
+    ]
+)
 
 with tab1:
     _apply_reset_form_state()
@@ -3603,11 +3591,8 @@ with tab1:
     st.markdown("---")
 
 with tab2:
-    tab2_header_visible = not st.session_state.get("tab2_authenticated", False)
-
-    if tab2_header_visible:
-        st.header(t("tab2_header"))
-        st.caption(t("tab2_caption"))
+    st.header(t("tab2_header"))
+    st.caption(t("tab2_caption"))
 
     registered_names, names_error = _load_registered_names(Path(RESULTS_PATH_IN_REPO))
 
@@ -3661,7 +3646,6 @@ with tab2:
         )
 
         if start_clicked and selected_name:
-            st.session_state["main_tabs"] = t("tab2_title")
             st.session_state["tab2_authenticated"] = True
             st.session_state["tab2_user_name"] = selected_name
             participant_id, participant_group = _lookup_participant_metadata(selected_name)
@@ -3677,6 +3661,7 @@ with tab2:
             _set_tab2_smartscore_map(selected_name)
             st.session_state["experiment_start_time"] = datetime.now()
             st.session_state["experiment_end_time"] = None
+            _trigger_streamlit_rerun()
         elif start_clicked and not selected_name:
             st.error(t("tab2_name_required_error"))
 
@@ -3687,7 +3672,7 @@ with tab2:
     if tab2_can_continue:
         usuario_activo = st.session_state.get("tab2_user_name", "")
         _ensure_tab2_smartscore_map(usuario_activo)
-        st.caption(t("tab2_logged_in_as", user=usuario_activo))
+        st.success(t("tab2_logged_in_as", user=usuario_activo))
 
         if st.button(t("tab2_switch_user"), key="tab2_logout"):
             st.session_state["tab2_authenticated"] = False
@@ -3696,6 +3681,7 @@ with tab2:
             st.session_state["tab2_user_group"] = ""
             _reset_visual_experiment_state()
             _set_tab2_smartscore_map("")
+            _trigger_streamlit_rerun()
 
         sequence = st.session_state.get("mode_sequence", [])
     else:
@@ -3748,11 +3734,7 @@ with tab2:
                 _reset_visual_experiment_state()
                 st.session_state["experiment_start_time"] = datetime.now()
                 st.session_state["experiment_end_time"] = None
-                st.session_state["tab2_authenticated"] = False
-                st.session_state["tab2_user_name"] = ""
-                st.session_state["tab2_user_id"] = ""
-                st.session_state["tab2_user_group"] = ""
-                _set_tab2_smartscore_map("")
+                _trigger_streamlit_rerun()
 
             tab2_can_continue = False
 
