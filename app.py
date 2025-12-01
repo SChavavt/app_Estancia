@@ -241,6 +241,11 @@ body {
 .main .block-container div[data-testid="stVerticalBlock"] > div:first-child {
     margin-top: 0;
 }
+
+/* Hide tab headers while the visual experiment is running to avoid accidental tab switches */
+.stTabs [data-baseweb="tab-list"] {
+    display: none !important;
+}
 </style>
 """
 
@@ -3338,13 +3343,25 @@ def asignar_grupos_experimentales():
 # =========================================================
 # INTERFACES
 # =========================================================
-tab1, tab2, tab_admin = st.tabs(
+tab_sequence = (
     [
-        t("tab1_title"),
-        t("tab2_title"),
-        "🛠️ Admin",
+        ("tab2", t("tab2_title")),
+        ("tab1", t("tab1_title")),
+        ("tab_admin", "🛠️ Admin"),
+    ]
+    if st.session_state.get("tab2_fullscreen_mode")
+    else [
+        ("tab1", t("tab1_title")),
+        ("tab2", t("tab2_title")),
+        ("tab_admin", "🛠️ Admin"),
     ]
 )
+
+tabs = st.tabs([label for _, label in tab_sequence])
+tab_lookup = {name: tab for (name, _), tab in zip(tab_sequence, tabs)}
+tab1 = tab_lookup["tab1"]
+tab2 = tab_lookup["tab2"]
+tab_admin = tab_lookup["tab_admin"]
 
 with tab1:
     _apply_reset_form_state()
