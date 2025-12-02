@@ -4111,18 +4111,10 @@ with tab2:
             selection_made = bool(current_state.get("selected"))
 
     if tab2_can_continue and current_mode and current_mode != "Sequential":
-        if not is_last_mode:
-            if st.button(
-                t("tab2_next_mode"),
-                key=f"next_mode_{current_mode}",
-                disabled=not selection_made,
-            ):
+        if selection_made:
+            if not is_last_mode:
                 _advance_visual_mode()
-        else:
-            if (
-                selection_made
-                and not st.session_state.get("experiment_completed")
-            ):
+            elif not st.session_state.get("experiment_completed"):
                 _complete_visual_experiment(usuario_activo)
                 _trigger_streamlit_rerun()
 
