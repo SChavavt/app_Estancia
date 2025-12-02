@@ -1495,6 +1495,20 @@ def obtener_aoi_layout(
     return layout
 
 
+def scale_aois_for_zoom(aois_dict, factor=0.8):
+    scaled = {}
+    for key, coords in aois_dict.items():
+        if isinstance(coords, dict):
+            scaled[key] = scale_aois_for_zoom(coords, factor=factor)
+            continue
+        if not isinstance(coords, (list, tuple)) or len(coords) != 4:
+            scaled[key] = coords
+            continue
+        x0, y0, x1, y1 = coords
+        scaled[key] = [x0, y0, x1 * factor, y1 * factor]
+    return scaled
+
+
 def _flatten_aoi_blocks(aois: Any) -> dict:
     if not isinstance(aois, dict):
         return {}
@@ -2114,6 +2128,7 @@ def _build_experiment_results(
                 producto_recomendado=producto_top_visible,
                 pantalla_id=pantalla_id,
             )
+            aois = scale_aois_for_zoom(aois, factor=0.8)
 
             record = base_record.copy()
             record["Pantalla_mostrada"] = pantalla_layout
