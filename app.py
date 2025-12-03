@@ -3039,6 +3039,90 @@ def _check_participant_files(repo, participant_id: str, force_refresh: bool = Fa
     return status
 
 
+def _validate_upload_file(file_obj: Any, nombre_archivo: str) -> None:
+    if file_obj is None:
+        raise ValueError(
+            f"El archivo {nombre_archivo} no fue subido ni existe en GitHub."
+        )
+    if hasattr(file_obj, "size") and getattr(file_obj, "size", 0) == 0:
+        raise ValueError(f"El archivo {nombre_archivo} está vacío. No se puede procesar.")
+
+
+def _validate_repo_content(content: Optional[bytes], nombre_archivo: str) -> None:
+    if content is None:
+        raise ValueError(
+            f"El archivo {nombre_archivo} no fue subido ni existe en GitHub."
+        )
+    if isinstance(content, (bytes, bytearray)) and len(content) == 0:
+        raise ValueError(f"El archivo {nombre_archivo} está vacío. No se puede procesar.")
+
+
+def _safe_read_csv(buffer, nombre_archivo: str) -> pd.DataFrame:
+    if str(nombre_archivo).lower().endswith((".mp4", ".npy")):
+        raise ValueError("Archivo no CSV detectado en lectura CSV.")
+    try:
+        return pd.read_csv(buffer)
+    except Exception as e:
+        st.error(f"Error leyendo {nombre_archivo}: {e}")
+        raise
+
+
+def _read_upload_csv(file_obj: Any, nombre_archivo: str) -> pd.DataFrame:
+    _validate_upload_file(file_obj, nombre_archivo)
+    return _safe_read_csv(file_obj, nombre_archivo)
+
+
+def _read_repo_csv(repo, ruta: str, nombre_archivo: str) -> pd.DataFrame:
+    if repo is None:
+        raise ValueError(
+            f"El archivo {nombre_archivo} no fue subido ni existe en GitHub."
+        )
+    try:
+        content_file = repo.get_contents(ruta)
+    except GithubException as gh_error:
+        if getattr(gh_error, "status", None) == 404:
+            raise ValueError(
+                f"El archivo {nombre_archivo} no fue subido ni existe en GitHub."
+            )
+        datos_error = getattr(gh_error, "data", {})
+        mensaje_error = (
+            datos_error.get("message", str(gh_error))
+            if isinstance(datos_error, dict)
+            else str(gh_error)
+        )
+        st.error(f"❌ Error al descargar {ruta}: {mensaje_error}")
+        raise
+
+    content = getattr(content_file, "decoded_content", None)
+    _validate_repo_content(content, nombre_archivo)
+    return _safe_read_csv(BytesIO(content), nombre_archivo)
+
+
+def _get_repo_file_content(repo, ruta: str, nombre_archivo: str) -> tuple[bytes, Optional[str]]:
+    if repo is None:
+        raise ValueError(
+            f"El archivo {nombre_archivo} no fue subido ni existe en GitHub."
+        )
+    try:
+        contents = repo.get_contents(ruta)
+    except GithubException as gh_error:
+        if getattr(gh_error, "status", None) == 404:
+            raise ValueError(
+                f"El archivo {nombre_archivo} no fue subido ni existe en GitHub."
+            )
+        datos_error = getattr(gh_error, "data", {})
+        mensaje_error = (
+            datos_error.get("message", str(gh_error))
+            if isinstance(datos_error, dict)
+            else str(gh_error)
+        )
+        st.error(f"❌ Error al descargar {ruta}: {mensaje_error}")
+        raise
+    content = getattr(contents, "decoded_content", None)
+    _validate_repo_content(content, nombre_archivo)
+    return content, contents.sha
+
+
 def _upload_to_repo(repo, path: str, content_bytes: bytes, existing_sha: Optional[str] = None) -> bool:
     if repo is None:
         return False
@@ -4388,33 +4472,38 @@ with tab_admin:
     
         if run_analysis and analysis_ready:
             try:
-                excel_bytes, _ = _download_repo_file(repo, expected_paths["excel_experimento"])
-                gaze_bytes, _ = _download_repo_file(repo, expected_paths["gaze"])
-                ts_bytes, _ = _download_repo_file(repo, expected_paths["timestamps"])
-                fixations_bytes, _ = _download_repo_file(repo, expected_paths["fixations"])
-                fixation_report_bytes, _ = _download_repo_file(
-                    repo, expected_paths["fixation_report"]
+                excel_bytes, _ = _get_repo_file_content(
+                    repo, expected_paths["excel_experimento"], file_labels["excel_experimento"]
                 )
-                blinks_file_bytes, _ = _download_repo_file(repo, expected_paths["blinks_file"])
-                blink_report_bytes, _ = _download_repo_file(repo, expected_paths["blink_report"])
-                pupil_bytes, _ = _download_repo_file(repo, expected_paths["pupil"])
-                export_info_bytes, _ = _download_repo_file(repo, expected_paths["export_info"])
-                video_bytes, _ = _download_repo_file(repo, expected_paths["video"])
+                gaze_df = _read_repo_csv(
+                    repo, expected_paths["gaze"], file_labels["gaze"]
+                )
+                ts_bytes, _ = _get_repo_file_content(
+                    repo, expected_paths["timestamps"], file_labels["timestamps"]
+                )
+                fixations_df = _read_repo_csv(
+                    repo, expected_paths["fixations"], file_labels["fixations"]
+                )
+                fixation_report_df = _read_repo_csv(
+                    repo, expected_paths["fixation_report"], file_labels["fixation_report"]
+                )
+                video_bytes, _ = _get_repo_file_content(
+                    repo, expected_paths["video"], file_labels["video"]
+                )
 
                 excel_df = pd.read_excel(BytesIO(excel_bytes), sheet_name="Resumen")
-                gaze_df = pd.read_csv(BytesIO(gaze_bytes))
                 world_ts = np.load(BytesIO(ts_bytes), allow_pickle=False)
-                fixations_df = pd.read_csv(BytesIO(fixations_bytes))
-                fixation_report_df = pd.read_csv(BytesIO(fixation_report_bytes))
-                blinks_file_df = (
-                    pd.read_csv(BytesIO(blinks_file_bytes)) if blinks_file_bytes else None
+                blinks_file_df = _read_repo_csv(
+                    repo, expected_paths["blinks_file"], file_labels["blinks_file"]
                 )
-                blink_df = (
-                    pd.read_csv(BytesIO(blink_report_bytes)) if blink_report_bytes else None
+                blink_df = _read_repo_csv(
+                    repo, expected_paths["blink_report"], file_labels["blink_report"]
                 )
-                pupil_df = pd.read_csv(BytesIO(pupil_bytes)) if pupil_bytes else None
-                export_info_df = (
-                    pd.read_csv(BytesIO(export_info_bytes)) if export_info_bytes else None
+                pupil_df = _read_repo_csv(
+                    repo, expected_paths["pupil"], file_labels["pupil"]
+                )
+                export_info_df = _read_repo_csv(
+                    repo, expected_paths["export_info"], file_labels["export_info"]
                 )
 
                 results = integrate_app_with_pupil(
@@ -4430,7 +4519,7 @@ with tab_admin:
                 results["excel_resumen"] = excel_df
                 st.session_state["analysis_result"] = results
                 st.session_state["analysis_video"] = video_bytes
-    
+
                 final_excel_bytes = export_final_excel(results)
                 final_path = expected_paths["excel_final"]
                 final_sha = status_map.get("excel_final", {}).get("sha")
