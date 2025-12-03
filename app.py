@@ -3072,6 +3072,21 @@ def _read_upload_csv(file_obj: Any, nombre_archivo: str) -> pd.DataFrame:
     return _safe_read_csv(file_obj, nombre_archivo)
 
 
+def _read_upload_csv_flexible(file_obj: Any, nombre_archivo: str) -> pd.DataFrame:
+    if file_obj is None or getattr(file_obj, "size", 0) == 0:
+        st.warning(
+            f"⚠️ Archivo opcional faltante o vacío: {nombre_archivo}. Se usará DataFrame vacío."
+        )
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(file_obj)
+    except Exception as e:
+        st.warning(
+            f"⚠️ Error leyendo archivo subido {nombre_archivo}: {e}. Se usará DataFrame vacío."
+        )
+        return pd.DataFrame()
+
+
 def _read_repo_csv(repo, ruta: str, nombre_archivo: str) -> pd.DataFrame:
     if repo is None:
         raise ValueError(
@@ -3096,6 +3111,37 @@ def _read_repo_csv(repo, ruta: str, nombre_archivo: str) -> pd.DataFrame:
     content = getattr(content_file, "decoded_content", None)
     _validate_repo_content(content, nombre_archivo)
     return _safe_read_csv(BytesIO(content), nombre_archivo)
+
+
+def _read_repo_csv_flexible(repo, ruta: str, nombre_archivo: str) -> pd.DataFrame:
+    """
+    Versión flexible: si el archivo no existe o está vacío, devuelve un DataFrame vacío.
+    """
+    try:
+        content_file = repo.get_contents(ruta)
+    except GithubException as gh_error:
+        if getattr(gh_error, "status", None) == 404:
+            st.warning(
+                f"⚠️ Archivo opcional faltante: {nombre_archivo}. Se usará un DataFrame vacío."
+            )
+            return pd.DataFrame()
+        raise
+
+    content = getattr(content_file, "decoded_content", None)
+
+    if content is None or len(content) == 0:
+        st.warning(
+            f"⚠️ Archivo opcional vacío: {nombre_archivo}. Se usará un DataFrame vacío."
+        )
+        return pd.DataFrame()
+
+    try:
+        return pd.read_csv(BytesIO(content))
+    except Exception as e:
+        st.warning(
+            f"⚠️ Error leyendo {nombre_archivo}: {e}. Se usará un DataFrame vacío."
+        )
+        return pd.DataFrame()
 
 
 def _get_repo_file_content(repo, ruta: str, nombre_archivo: str) -> tuple[bytes, Optional[str]]:
@@ -4487,22 +4533,26 @@ with tab_admin:
                 fixation_report_df = _read_repo_csv(
                     repo, expected_paths["fixation_report"], file_labels["fixation_report"]
                 )
-                video_bytes, _ = _get_repo_file_content(
-                    repo, expected_paths["video"], file_labels["video"]
-                )
+                try:
+                    video_bytes, _ = _get_repo_file_content(
+                        repo, expected_paths["video"], file_labels["video"]
+                    )
+                except Exception:
+                    st.warning("⚠️ No se encontró world.mp4. El análisis continuará sin video.")
+                    video_bytes = None
 
                 excel_df = pd.read_excel(BytesIO(excel_bytes), sheet_name="Resumen")
                 world_ts = np.load(BytesIO(ts_bytes), allow_pickle=False)
-                blinks_file_df = _read_repo_csv(
+                blinks_file_df = _read_repo_csv_flexible(
                     repo, expected_paths["blinks_file"], file_labels["blinks_file"]
                 )
-                blink_df = _read_repo_csv(
+                blink_df = _read_repo_csv_flexible(
                     repo, expected_paths["blink_report"], file_labels["blink_report"]
                 )
-                pupil_df = _read_repo_csv(
+                pupil_df = _read_repo_csv_flexible(
                     repo, expected_paths["pupil"], file_labels["pupil"]
                 )
-                export_info_df = _read_repo_csv(
+                export_info_df = _read_repo_csv_flexible(
                     repo, expected_paths["export_info"], file_labels["export_info"]
                 )
 
