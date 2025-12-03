@@ -2707,6 +2707,8 @@ def integrate_app_with_pupil(
     excel_df,
     gaze_df,
     world_ts,
+    fixations_df=None,
+    fixation_report_df=None,
     blink_df=None,
     pupil_df=None,
     export_info_df=None,
@@ -2989,7 +2991,10 @@ def _expected_participant_files(participant_id: str) -> dict[str, str]:
         "excel_experimento": f"{base}/experimento_{participant_id}.xlsx",
         "gaze": f"{base}/gaze_positions.csv",
         "timestamps": f"{base}/world_timestamps.npy",
-        "blinks": f"{base}/blink_detection_report.csv",
+        "fixations": f"{base}/fixations.csv",
+        "fixation_report": f"{base}/fixation_report.csv",
+        "blinks_file": f"{base}/blinks.csv",
+        "blink_report": f"{base}/blink_detection_report.csv",
         "pupil": f"{base}/pupil_positions.csv",
         "export_info": f"{base}/export_info.csv",
         "video": f"{base}/world.mp4",
@@ -4293,7 +4298,10 @@ with tab_admin:
             "excel_experimento": f"experimento_{selected_id}.xlsx",
             "gaze": "gaze_positions.csv",
             "timestamps": "world_timestamps.npy",
-            "blinks": "blink_detection_report.csv",
+            "fixations": "fixations.csv",
+            "fixation_report": "fixation_report.csv",
+            "blinks_file": "blinks.csv",
+            "blink_report": "blink_detection_report.csv",
             "pupil": "pupil_positions.csv",
             "export_info": "export_info.csv",
             "video": "world.mp4",
@@ -4309,11 +4317,18 @@ with tab_admin:
     
         st.markdown("### ⬆️ Subir/actualizar archivos de Pupil Labs")
         st.caption("Carga los archivos faltantes o reemplaza los existentes. Se guardan directamente en GitHub.")
-    
+
         upload_fields = [
             ("gaze", "gaze_positions.csv", ["csv"], False),
             ("timestamps", "world_timestamps.npy", ["npy"], False),
-            ("blinks", "blink_detection_report.csv", ["csv"], True),
+            
+            # Archivos obligatorios adicionales
+            ("fixations", "fixations.csv", ["csv"], False),
+            ("fixation_report", "fixation_report.csv", ["csv"], False),
+
+            # Archivos opcionales
+            ("blinks_file", "blinks.csv", ["csv"], True),
+            ("blink_report", "blink_detection_report.csv", ["csv"], True),
             ("pupil", "pupil_positions.csv", ["csv"], True),
             ("export_info", "export_info.csv", ["csv"], True),
             ("video", "world.mp4", ["mp4"], True),
@@ -4352,7 +4367,7 @@ with tab_admin:
                 st.info("No se seleccionaron archivos para subir.")
     
         st.markdown("### 📊 Análisis del Experimento – Integración App + Pupil Labs")
-        mandatory_keys = ["excel_experimento", "gaze", "timestamps"]
+        mandatory_keys = ["excel_experimento", "gaze", "timestamps", "fixations", "fixation_report"]
         missing = [
             file_labels[key]
             for key in mandatory_keys
@@ -4376,24 +4391,38 @@ with tab_admin:
                 excel_bytes, _ = _download_repo_file(repo, expected_paths["excel_experimento"])
                 gaze_bytes, _ = _download_repo_file(repo, expected_paths["gaze"])
                 ts_bytes, _ = _download_repo_file(repo, expected_paths["timestamps"])
-                blinks_bytes, _ = _download_repo_file(repo, expected_paths["blinks"])
+                fixations_bytes, _ = _download_repo_file(repo, expected_paths["fixations"])
+                fixation_report_bytes, _ = _download_repo_file(
+                    repo, expected_paths["fixation_report"]
+                )
+                blinks_file_bytes, _ = _download_repo_file(repo, expected_paths["blinks_file"])
+                blink_report_bytes, _ = _download_repo_file(repo, expected_paths["blink_report"])
                 pupil_bytes, _ = _download_repo_file(repo, expected_paths["pupil"])
                 export_info_bytes, _ = _download_repo_file(repo, expected_paths["export_info"])
                 video_bytes, _ = _download_repo_file(repo, expected_paths["video"])
-    
+
                 excel_df = pd.read_excel(BytesIO(excel_bytes), sheet_name="Resumen")
                 gaze_df = pd.read_csv(BytesIO(gaze_bytes))
                 world_ts = np.load(BytesIO(ts_bytes), allow_pickle=False)
-                blink_df = pd.read_csv(BytesIO(blinks_bytes)) if blinks_bytes else None
+                fixations_df = pd.read_csv(BytesIO(fixations_bytes))
+                fixation_report_df = pd.read_csv(BytesIO(fixation_report_bytes))
+                blinks_file_df = (
+                    pd.read_csv(BytesIO(blinks_file_bytes)) if blinks_file_bytes else None
+                )
+                blink_df = (
+                    pd.read_csv(BytesIO(blink_report_bytes)) if blink_report_bytes else None
+                )
                 pupil_df = pd.read_csv(BytesIO(pupil_bytes)) if pupil_bytes else None
                 export_info_df = (
                     pd.read_csv(BytesIO(export_info_bytes)) if export_info_bytes else None
                 )
-    
+
                 results = integrate_app_with_pupil(
                     excel_df=excel_df,
                     gaze_df=gaze_df,
                     world_ts=world_ts,
+                    fixations_df=fixations_df,
+                    fixation_report_df=fixation_report_df,
                     blink_df=blink_df,
                     pupil_df=pupil_df,
                     export_info_df=export_info_df,
