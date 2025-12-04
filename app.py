@@ -7,6 +7,7 @@ import html
 import threading
 import time
 import unicodedata
+import urllib.request
 from difflib import SequenceMatcher
 from io import BytesIO
 from datetime import datetime, timedelta
@@ -3068,6 +3069,18 @@ def _validate_repo_content(content: Optional[bytes], nombre_archivo: str) -> Non
 def _extract_content_bytes(content_file: Any, nombre_archivo: str) -> Optional[bytes]:
     """Devuelve el contenido en bytes de un archivo de GitHub, tolerando codificaciones desconocidas."""
 
+    def _download_from_url(url: Optional[str]) -> Optional[bytes]:
+        if not url:
+            return None
+        try:
+            with urllib.request.urlopen(url) as response:
+                return response.read()
+        except Exception as error:
+            st.warning(
+                f"⚠️ No se pudo descargar {nombre_archivo} desde GitHub (download_url). Error: {error}"
+            )
+            return None
+
     try:
         decoded = getattr(content_file, "decoded_content", None)
         if isinstance(decoded, (bytes, bytearray)):
@@ -3077,6 +3090,8 @@ def _extract_content_bytes(content_file: Any, nombre_archivo: str) -> Optional[b
         pass
 
     raw_content = getattr(content_file, "content", None)
+    download_url = getattr(content_file, "download_url", None)
+    reported_size = getattr(content_file, "size", None)
 
     if isinstance(raw_content, str):
         try:
@@ -3089,6 +3104,15 @@ def _extract_content_bytes(content_file: Any, nombre_archivo: str) -> Optional[b
 
     if isinstance(raw_content, (bytes, bytearray)):
         return bytes(raw_content)
+
+    fallback_content = _download_from_url(download_url)
+    if fallback_content:
+        return fallback_content
+    if isinstance(reported_size, int) and reported_size > 0:
+        st.warning(
+            f"⚠️ El archivo {nombre_archivo} reporta tamaño {reported_size} bytes en GitHub, "
+            "pero no se pudo recuperar su contenido."
+        )
 
     st.error(
         f"❌ No se pudo obtener el contenido de {nombre_archivo} desde GitHub (formato desconocido)."
