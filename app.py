@@ -4530,36 +4530,11 @@ with tab_admin:
             st.info("Selecciona un participante para revisar sus archivos.")
             st.stop()
     
-        # Resolver carpeta real del participante
-        participant_folder = _resolve_participant_folder(repo, selected_id)
+        # Usar siempre la lógica central para rutas
+        expected_paths = _expected_participant_files(selected_id)
 
-        if participant_folder is None:
-            st.stop()
-
-        # Carpeta correcta
-        base = f"data_participantes/{participant_folder}"
-
-        # Rutas de archivos
-        expected_paths = {
-            "excel_experimento": f"{base}/experimento_{participant_folder}.xlsx",
-            "gaze": f"{base}/gaze_positions.csv",
-            "timestamps": f"{base}/world_timestamps.npy",
-            "fixations": f"{base}/fixations.csv",
-            "fixation_report": f"{base}/fixation_report.csv",
-            "blinks_file": f"{base}/blinks.csv",
-            "blink_report": f"{base}/blink_detection_report.csv",
-            "pupil": f"{base}/pupil_positions.csv",
-            "export_info": f"{base}/export_info.csv",
-            "video": f"{base}/world.mp4",
-            "excel_final": f"{base}/excel_final.xlsx",
-        }
-
-
-        # ✔️ ESTA ES LA CORRECCIÓN IMPORTANTE
-        status_map = _check_participant_files(repo, participant_folder)
-
-
-
+        # Verificar archivos del participante
+        status_map = _check_participant_files(repo, selected_id)
     
         status_rows = []
         for key, label in file_labels.items():
@@ -4644,9 +4619,10 @@ with tab_admin:
                 excel_bytes, _ = _get_repo_file_content(
                     repo, expected_paths["excel_experimento"], file_labels["excel_experimento"]
                 )
-                gaze_df = _read_repo_csv_flexible(
+                gaze_df = _read_repo_csv(
                     repo, expected_paths["gaze"], file_labels["gaze"]
                 )
+
                 ts_bytes, _ = _get_repo_file_content(
                     repo, expected_paths["timestamps"], file_labels["timestamps"]
                 )
