@@ -4370,7 +4370,6 @@ with tab2:
     if visual_wrapper_open:
         st.markdown("</div></div>", unsafe_allow_html=True)
 
-# Mapeo de etiquetas para mostrar nombres amigables de archivos
 file_labels = {
     "excel_experimento": "Excel del Experimento",
     "gaze": "gaze_positions.csv",
@@ -4534,7 +4533,6 @@ with tab_admin:
             st.info("Selecciona un participante para revisar sus archivos.")
             st.stop()
     
-        status_map = _check_participant_files(repo, selected_id)
         # Resolver carpeta real del participante
         participant_folder = _resolve_participant_folder(repo, selected_id)
 
@@ -4558,6 +4556,10 @@ with tab_admin:
             "video": f"{base}/world.mp4",
             "excel_final": f"{base}/excel_final.xlsx",
         }
+
+        # AHORA SÍ: verificar archivos usando la carpeta real
+        status_map = _check_participant_files(repo, participant_folder)
+
 
     
         status_rows = []
