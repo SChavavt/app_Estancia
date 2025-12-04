@@ -3045,7 +3045,7 @@ def _resolve_participant_folder(repo, participant_id: str) -> Optional[str]:
     Busca dentro de app_Estancia/data_participantes/ la carpeta real
     cuyo nombre corresponde al participante, incluso si tiene espacios.
     """
-    base_path = "app_Estancia/data_participantes"
+    base_path = "data_participantes"
 
     # Intentar leer la carpeta base
     try:
