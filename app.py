@@ -3060,11 +3060,20 @@ def _validate_repo_content(content: Optional[bytes], nombre_archivo: str) -> Non
 def _safe_read_csv(buffer, nombre_archivo: str) -> pd.DataFrame:
     if str(nombre_archivo).lower().endswith((".mp4", ".npy")):
         raise ValueError("Archivo no CSV detectado en lectura CSV.")
-    try:
-        return pd.read_csv(buffer)
-    except Exception as e:
-        st.error(f"Error leyendo {nombre_archivo}: {e}")
-        raise
+
+    encodings_to_try = ["utf-8", "utf-8-sig", "latin1", "iso-8859-1"]
+
+    for enc in encodings_to_try:
+        try:
+            return pd.read_csv(buffer, encoding=enc)
+        except Exception:
+            buffer.seek(0)
+
+    st.warning(
+        f"⚠️ No fue posible leer {nombre_archivo} debido a un problema de codificación. "
+        "Se usará un DataFrame vacío."
+    )
+    return pd.DataFrame()
 
 
 def _read_upload_csv(file_obj: Any, nombre_archivo: str) -> pd.DataFrame:
