@@ -4544,7 +4544,7 @@ with tab_admin:
 
         # Rutas de archivos
         expected_paths = {
-            "excel_experimento": f"{base}/excel_experimento.xlsx",
+            "excel_experimento": f"{base}/experimento_{participant_folder}.xlsx",
             "gaze": f"{base}/gaze_positions.csv",
             "timestamps": f"{base}/world_timestamps.npy",
             "fixations": f"{base}/fixations.csv",
@@ -4557,8 +4557,9 @@ with tab_admin:
             "excel_final": f"{base}/excel_final.xlsx",
         }
 
+
         # ✔️ ESTA ES LA CORRECCIÓN IMPORTANTE
-        status_map = _check_participant_files(repo, selected_id)
+        status_map = _check_participant_files(repo, participant_folder)
 
 
 
