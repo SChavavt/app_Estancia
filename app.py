@@ -4593,7 +4593,7 @@ with tab_admin:
                 excel_bytes, _ = _get_repo_file_content(
                     repo, expected_paths["excel_experimento"], file_labels["excel_experimento"]
                 )
-                gaze_df = _read_repo_csv(
+                gaze_df = _read_repo_csv_flexible(
                     repo, expected_paths["gaze"], file_labels["gaze"]
                 )
                 ts_bytes, _ = _get_repo_file_content(
