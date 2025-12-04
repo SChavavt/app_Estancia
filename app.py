@@ -4539,10 +4539,10 @@ with tab_admin:
         if participant_folder is None:
             st.stop()
 
-        # Carpeta base CORRECTA
-        base = f"app_Estancia/data_participantes/{participant_folder}"
+        # Carpeta correcta
+        base = f"data_participantes/{participant_folder}"
 
-        # Rutas reales en GitHub
+        # Rutas de archivos
         expected_paths = {
             "excel_experimento": f"{base}/excel_experimento.xlsx",
             "gaze": f"{base}/gaze_positions.csv",
@@ -4557,8 +4557,9 @@ with tab_admin:
             "excel_final": f"{base}/excel_final.xlsx",
         }
 
-        # AHORA SÍ: verificar archivos usando la carpeta real
-        status_map = _check_participant_files(repo, participant_folder)
+        # ✔️ ESTA ES LA CORRECCIÓN IMPORTANTE
+        status_map = _check_participant_files(repo, selected_id)
+
 
 
     
