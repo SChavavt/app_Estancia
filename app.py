@@ -13,7 +13,6 @@ from io import BytesIO
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Any
-
 import pandas as pd
 import numpy as np
 
@@ -3214,33 +3213,31 @@ def _read_repo_csv(repo, ruta: str, nombre_archivo: str) -> pd.DataFrame:
 
 def _read_repo_csv_flexible(repo, ruta: str, nombre_archivo: str) -> pd.DataFrame:
     """
-    Versión flexible: si el archivo no existe o está vacío, devuelve un DataFrame vacío.
+    Lee archivos CSV desde GitHub incluso si son opcionales.
+    Usa BytesIO para asegurar que pandas los lea correctamente.
     """
     try:
-        content_file = repo.get_contents(ruta)
-    except GithubException as gh_error:
-        if getattr(gh_error, "status", None) == 404:
-            st.warning(
-                f"⚠️ Archivo opcional faltante: {nombre_archivo}. Se usará un DataFrame vacío."
-            )
+        content, _ = _get_repo_file_content(repo, ruta, nombre_archivo)
+
+        if content is None or len(content) == 0:
+            st.warning(f"⚠️ Archivo opcional vacío: {nombre_archivo}. Se usará un DataFrame vacío.")
             return pd.DataFrame()
-        raise
 
-    content = _extract_content_bytes(content_file, nombre_archivo)
+        # Intentar leer con varios encodings
+        encodings = ["utf-8", "utf-8-sig", "latin1", "iso-8859-1"]
+        for enc in encodings:
+            try:
+                return pd.read_csv(BytesIO(content), encoding=enc)
+            except Exception:
+                continue
 
-    if content is None or len(content) == 0:
-        st.warning(
-            f"⚠️ Archivo opcional vacío: {nombre_archivo}. Se usará un DataFrame vacío."
-        )
+        st.warning(f"⚠️ No se pudo leer {nombre_archivo}. Se usará DataFrame vacío.")
         return pd.DataFrame()
 
-    try:
-        return pd.read_csv(BytesIO(content))
-    except Exception as e:
-        st.warning(
-            f"⚠️ Error leyendo {nombre_archivo}: {e}. Se usará un DataFrame vacío."
-        )
+    except Exception:
+        st.warning(f"⚠️ Archivo opcional faltante: {nombre_archivo}. Se usará un DataFrame vacío.")
         return pd.DataFrame()
+
 
 
 def _get_repo_file_content(repo, ruta: str, nombre_archivo: str) -> tuple[bytes, Optional[str]]:
