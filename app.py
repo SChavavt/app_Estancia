@@ -3044,7 +3044,15 @@ def _validate_upload_file(file_obj: Any, nombre_archivo: str) -> None:
         raise ValueError(
             f"El archivo {nombre_archivo} no fue subido ni existe en GitHub."
         )
-    if hasattr(file_obj, "size") and getattr(file_obj, "size", 0) == 0:
+    reported_size = getattr(file_obj, "size", None)
+    if reported_size == 0:
+        try:
+            raw_bytes = file_obj.getvalue()
+            if isinstance(raw_bytes, (bytes, bytearray)) and len(raw_bytes) > 0:
+                file_obj.seek(0)
+                return
+        except Exception:
+            pass
         raise ValueError(f"El archivo {nombre_archivo} está vacío. No se puede procesar.")
 
 
