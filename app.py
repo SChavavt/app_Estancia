@@ -4615,6 +4615,7 @@ with tab_admin:
         )
     
         if run_analysis and analysis_ready:
+            st.write("DEBUG ruta gaze →", expected_paths["gaze"])
             try:
                 excel_bytes, _ = _get_repo_file_content(
                     repo, expected_paths["excel_experimento"], file_labels["excel_experimento"]
