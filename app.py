@@ -3092,58 +3092,35 @@ def _validate_repo_content(content: Optional[bytes], nombre_archivo: str) -> Non
         raise ValueError(f"El archivo {nombre_archivo} está vacío. No se puede procesar.")
 
 
-def _extract_content_bytes(content_file: Any, nombre_archivo: str) -> Optional[bytes]:
-    """Devuelve el contenido en bytes de un archivo de GitHub, tolerando codificaciones desconocidas."""
-
-    def _download_from_url(url: Optional[str]) -> Optional[bytes]:
-        if not url:
-            return None
+def _extract_content_bytes(contents, nombre_archivo):
+    """
+    Extrae bytes reales del archivo desde GitHub.
+    Maneja casos donde GitHub NO envía el contenido inline (archivos grandes).
+    """
+    # Caso 1: GitHub envía contenido en base64 (archivos pequeños)
+    if hasattr(contents, "content") and contents.content:
         try:
-            with urllib.request.urlopen(url) as response:
-                return response.read()
-        except Exception as error:
-            st.warning(
-                f"⚠️ No se pudo descargar {nombre_archivo} desde GitHub (download_url). Error: {error}"
-            )
-            return None
+            return base64.b64decode(contents.content)
+        except Exception:
+            pass  # si falla, intentamos download_url
 
-    try:
-        decoded = getattr(content_file, "decoded_content", None)
-        if isinstance(decoded, (bytes, bytearray)):
-            return decoded
-    except Exception:
-        # Fallback manual en caso de codificación no soportada (p.ej. "none").
-        pass
-
-    raw_content = getattr(content_file, "content", None)
-    download_url = getattr(content_file, "download_url", None)
-    reported_size = getattr(content_file, "size", None)
-
-    if isinstance(raw_content, str):
+    # Caso 2: GitHub NO envía 'content' (archivos grandes → tu caso)
+    if hasattr(contents, "download_url") and contents.download_url:
         try:
-            return base64.b64decode(raw_content)
-        except Exception as error:
-            st.error(
-                f"❌ No se pudo decodificar {nombre_archivo} desde GitHub: {error}"
+            import requests
+            r = requests.get(contents.download_url)
+            r.raise_for_status()
+            return r.content
+        except Exception as e:
+            raise ValueError(
+                f"No se pudo descargar {nombre_archivo} desde download_url: {e}"
             )
-            return None
 
-    if isinstance(raw_content, (bytes, bytearray)):
-        return bytes(raw_content)
-
-    fallback_content = _download_from_url(download_url)
-    if fallback_content:
-        return fallback_content
-    if isinstance(reported_size, int) and reported_size > 0:
-        st.warning(
-            f"⚠️ El archivo {nombre_archivo} reporta tamaño {reported_size} bytes en GitHub, "
-            "pero no se pudo recuperar su contenido."
-        )
-
-    st.error(
-        f"❌ No se pudo obtener el contenido de {nombre_archivo} desde GitHub (formato desconocido)."
+    # Caso 3: nada funcionó
+    raise ValueError(
+        f"No se pudo extraer contenido del archivo {nombre_archivo} desde GitHub."
     )
-    return None
+
 
 
 def _safe_read_csv(buffer, nombre_archivo: str) -> pd.DataFrame:
@@ -3208,6 +3185,8 @@ def _read_repo_csv(repo, ruta: str, nombre_archivo: str) -> pd.DataFrame:
 
     content = _extract_content_bytes(content_file, nombre_archivo)
     _validate_repo_content(content, nombre_archivo)
+    st.write("Tamaño real gaze:", len(content))
+
     return _safe_read_csv(BytesIO(content), nombre_archivo)
 
 
