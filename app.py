@@ -2704,6 +2704,7 @@ def _timestamp_from_frame(
 
 
 def integrate_app_with_pupil(
+    
     excel_df,
     gaze_df,
     world_ts,
@@ -3163,31 +3164,37 @@ def _read_upload_csv_flexible(file_obj: Any, nombre_archivo: str) -> pd.DataFram
 
 
 def _read_repo_csv(repo, ruta: str, nombre_archivo: str) -> pd.DataFrame:
+    """Lectura robusta para archivos obligatorios de Pupil Labs con fallback seguro."""
     if repo is None:
-        raise ValueError(
-            f"El archivo {nombre_archivo} no fue subido ni existe en GitHub."
-        )
+        raise ValueError(f"El archivo {nombre_archivo} no existe en GitHub.")
+
+    # Descargar archivo
     try:
-        content_file = repo.get_contents(ruta)
+        contents = repo.get_contents(ruta)
     except GithubException as gh_error:
         if getattr(gh_error, "status", None) == 404:
-            raise ValueError(
-                f"El archivo {nombre_archivo} no fue subido ni existe en GitHub."
-            )
-        datos_error = getattr(gh_error, "data", {})
-        mensaje_error = (
-            datos_error.get("message", str(gh_error))
-            if isinstance(datos_error, dict)
-            else str(gh_error)
-        )
-        st.error(f"❌ Error al descargar {ruta}: {mensaje_error}")
+            raise ValueError(f"El archivo {nombre_archivo} no fue subido.")
         raise
 
-    content = _extract_content_bytes(content_file, nombre_archivo)
-    _validate_repo_content(content, nombre_archivo)
-    st.write("Tamaño real gaze:", len(content))
+    # Extraer bytes correctamente
+    raw = _extract_content_bytes(contents, nombre_archivo)
 
-    return _safe_read_csv(BytesIO(content), nombre_archivo)
+    if raw is None or len(raw) < 50:
+        raise ValueError(f"El archivo {nombre_archivo} está vacío o corrupto.")
+
+    st.write(f"DEBUG tamaño real {nombre_archivo}:", len(raw))
+
+    # Lectura robusta
+    for enc in ["utf-8", "utf-8-sig", "latin1", "iso-8859-1"]:
+        try:
+            df = pd.read_csv(BytesIO(raw), encoding=enc)
+            if not df.empty:
+                return df
+        except Exception:
+            pass
+
+    raise ValueError(f"No se pudo leer correctamente el archivo {nombre_archivo}.")
+
 
 
 def _read_repo_csv_flexible(repo, ruta: str, nombre_archivo: str) -> pd.DataFrame:
@@ -4597,9 +4604,7 @@ with tab_admin:
             st.write("DEBUG ruta gaze →", expected_paths["gaze"])
 
             try:
-                # =======================
-                # 1. CARGA DE ARCHIVOS
-                # =======================
+                # === CARGA DE ARCHIVOS OBLIGATORIOS ===
                 excel_bytes, _ = _get_repo_file_content(
                     repo, expected_paths["excel_experimento"], file_labels["excel_experimento"]
                 )
@@ -4608,6 +4613,13 @@ with tab_admin:
                     repo, expected_paths["gaze"], file_labels["gaze"]
                 )
 
+                # FIX → renombrar columna correcta
+                if "gaze_timestamp" in gaze_df.columns:
+                    gaze_df = gaze_df.rename(columns={"gaze_timestamp": "timestamp"})
+
+                if "timestamp" not in gaze_df.columns:
+                    raise ValueError("El archivo gaze_positions.csv no contiene columna timestamp.")
+
                 ts_bytes, _ = _get_repo_file_content(
                     repo, expected_paths["timestamps"], file_labels["timestamps"]
                 )
@@ -4615,65 +4627,42 @@ with tab_admin:
                 fixations_df = _read_repo_csv(
                     repo, expected_paths["fixations"], file_labels["fixations"]
                 )
+                if "start_timestamp" in fixations_df.columns:
+                    fixations_df = fixations_df.rename(columns={"start_timestamp": "timestamp"})
 
                 fixation_report_df = _read_repo_csv(
                     repo, expected_paths["fixation_report"], file_labels["fixation_report"]
                 )
+                if "start_timestamp" in fixation_report_df.columns and "timestamp" not in fixation_report_df.columns:
+                    fixation_report_df = fixation_report_df.rename(columns={"start_timestamp": "timestamp"})
 
-                # Video es opcional
+                # === ARCHIVOS OPCIONALES ===
                 try:
                     video_bytes, _ = _get_repo_file_content(
                         repo, expected_paths["video"], file_labels["video"]
                     )
-                except Exception:
+                except:
                     st.warning("⚠️ No se encontró world.mp4. El análisis continuará sin video.")
                     video_bytes = None
 
-                blinks_file_df = _read_repo_csv_flexible(
-                    repo, expected_paths["blinks_file"], file_labels["blinks_file"]
-                )
+                pupil_df = _read_repo_csv_flexible(repo, expected_paths["pupil"], file_labels["pupil"])
+                if not pupil_df.empty and "pupil_timestamp" in pupil_df.columns:
+                    pupil_df = pupil_df.rename(columns={"pupil_timestamp": "timestamp"})
+
                 blink_df = _read_repo_csv_flexible(
                     repo, expected_paths["blink_report"], file_labels["blink_report"]
                 )
-                pupil_df = _read_repo_csv_flexible(
-                    repo, expected_paths["pupil"], file_labels["pupil"]
+                blinks_file_df = _read_repo_csv_flexible(
+                    repo, expected_paths["blinks_file"], file_labels["blinks_file"]
                 )
                 export_info_df = _read_repo_csv_flexible(
                     repo, expected_paths["export_info"], file_labels["export_info"]
                 )
 
-                # =======================
-                # 2. DECODIFICACIÓN
-                # =======================
+                # === PROCESAMIENTO ===
                 excel_df = pd.read_excel(BytesIO(excel_bytes), sheet_name="Resumen")
                 world_ts = np.load(BytesIO(ts_bytes), allow_pickle=False)
 
-                # =======================
-                # 3. FIX PARA TIMESTAMPS
-                # =======================
-
-                # --- Gaze CSV ---
-                if "gaze_timestamp" in gaze_df.columns:
-                    gaze_df = gaze_df.rename(columns={"gaze_timestamp": "timestamp"})
-
-                # --- Pupil CSV (si existe) ---
-                if not pupil_df.empty and "pupil_timestamp" in pupil_df.columns:
-                    pupil_df = pupil_df.rename(columns={"pupil_timestamp": "timestamp"})
-
-                # --- Fixations ---
-                if "start_timestamp" in fixations_df.columns:
-                    fixations_df = fixations_df.rename(columns={"start_timestamp": "timestamp"})
-
-                # --- Fixation report ---
-                if "timestamp" not in fixation_report_df.columns:
-                    if "start_timestamp" in fixation_report_df.columns:
-                        fixation_report_df = fixation_report_df.rename(
-                            columns={"start_timestamp": "timestamp"}
-                        )
-
-                # =======================
-                # 4. EJECUTAR ANÁLISIS
-                # =======================
                 results = integrate_app_with_pupil(
                     excel_df=excel_df,
                     gaze_df=gaze_df,
@@ -4685,29 +4674,19 @@ with tab_admin:
                     export_info_df=export_info_df,
                 )
 
-                results["excel_resumen"] = excel_df
+                st.success("Análisis completado correctamente.")
                 st.session_state["analysis_result"] = results
                 st.session_state["analysis_video"] = video_bytes
 
-                # =======================
-                # 5. GENERAR EXCEL FINAL
-                # =======================
                 final_excel_bytes = export_final_excel(results)
-                final_path = expected_paths["excel_final"]
-                final_sha = status_map.get("excel_final", {}).get("sha")
-
-                saved = _upload_to_repo(repo, final_path, final_excel_bytes, final_sha)
-
-                if saved:
-                    st.success("Análisis completado y Excel final guardado en GitHub.")
-                    status_map = _check_participant_files(repo, selected_id, force_refresh=True)
-                else:
-                    st.warning("El Excel final no pudo guardarse en GitHub, pero puedes descargarlo abajo.")
+                _upload_to_repo(repo, expected_paths["excel_final"], final_excel_bytes, None)
 
                 st.session_state["analysis_final_excel"] = final_excel_bytes
 
             except Exception as error:
                 st.error(f"No se pudo procesar el análisis: {error}")
+
+
 
     
         analysis_result = st.session_state.get("analysis_result")
