@@ -4595,10 +4595,15 @@ with tab_admin:
     
         if run_analysis and analysis_ready:
             st.write("DEBUG ruta gaze →", expected_paths["gaze"])
+
             try:
+                # =======================
+                # 1. CARGA DE ARCHIVOS
+                # =======================
                 excel_bytes, _ = _get_repo_file_content(
                     repo, expected_paths["excel_experimento"], file_labels["excel_experimento"]
                 )
+
                 gaze_df = _read_repo_csv(
                     repo, expected_paths["gaze"], file_labels["gaze"]
                 )
@@ -4606,12 +4611,16 @@ with tab_admin:
                 ts_bytes, _ = _get_repo_file_content(
                     repo, expected_paths["timestamps"], file_labels["timestamps"]
                 )
+
                 fixations_df = _read_repo_csv(
                     repo, expected_paths["fixations"], file_labels["fixations"]
                 )
+
                 fixation_report_df = _read_repo_csv(
                     repo, expected_paths["fixation_report"], file_labels["fixation_report"]
                 )
+
+                # Video es opcional
                 try:
                     video_bytes, _ = _get_repo_file_content(
                         repo, expected_paths["video"], file_labels["video"]
@@ -4620,8 +4629,6 @@ with tab_admin:
                     st.warning("⚠️ No se encontró world.mp4. El análisis continuará sin video.")
                     video_bytes = None
 
-                excel_df = pd.read_excel(BytesIO(excel_bytes), sheet_name="Resumen")
-                world_ts = np.load(BytesIO(ts_bytes), allow_pickle=False)
                 blinks_file_df = _read_repo_csv_flexible(
                     repo, expected_paths["blinks_file"], file_labels["blinks_file"]
                 )
@@ -4635,6 +4642,38 @@ with tab_admin:
                     repo, expected_paths["export_info"], file_labels["export_info"]
                 )
 
+                # =======================
+                # 2. DECODIFICACIÓN
+                # =======================
+                excel_df = pd.read_excel(BytesIO(excel_bytes), sheet_name="Resumen")
+                world_ts = np.load(BytesIO(ts_bytes), allow_pickle=False)
+
+                # =======================
+                # 3. FIX PARA TIMESTAMPS
+                # =======================
+
+                # --- Gaze CSV ---
+                if "gaze_timestamp" in gaze_df.columns:
+                    gaze_df = gaze_df.rename(columns={"gaze_timestamp": "timestamp"})
+
+                # --- Pupil CSV (si existe) ---
+                if not pupil_df.empty and "pupil_timestamp" in pupil_df.columns:
+                    pupil_df = pupil_df.rename(columns={"pupil_timestamp": "timestamp"})
+
+                # --- Fixations ---
+                if "start_timestamp" in fixations_df.columns:
+                    fixations_df = fixations_df.rename(columns={"start_timestamp": "timestamp"})
+
+                # --- Fixation report ---
+                if "timestamp" not in fixation_report_df.columns:
+                    if "start_timestamp" in fixation_report_df.columns:
+                        fixation_report_df = fixation_report_df.rename(
+                            columns={"start_timestamp": "timestamp"}
+                        )
+
+                # =======================
+                # 4. EJECUTAR ANÁLISIS
+                # =======================
                 results = integrate_app_with_pupil(
                     excel_df=excel_df,
                     gaze_df=gaze_df,
@@ -4645,22 +4684,31 @@ with tab_admin:
                     pupil_df=pupil_df,
                     export_info_df=export_info_df,
                 )
+
                 results["excel_resumen"] = excel_df
                 st.session_state["analysis_result"] = results
                 st.session_state["analysis_video"] = video_bytes
 
+                # =======================
+                # 5. GENERAR EXCEL FINAL
+                # =======================
                 final_excel_bytes = export_final_excel(results)
                 final_path = expected_paths["excel_final"]
                 final_sha = status_map.get("excel_final", {}).get("sha")
+
                 saved = _upload_to_repo(repo, final_path, final_excel_bytes, final_sha)
+
                 if saved:
                     st.success("Análisis completado y Excel final guardado en GitHub.")
                     status_map = _check_participant_files(repo, selected_id, force_refresh=True)
                 else:
                     st.warning("El Excel final no pudo guardarse en GitHub, pero puedes descargarlo abajo.")
+
                 st.session_state["analysis_final_excel"] = final_excel_bytes
+
             except Exception as error:
                 st.error(f"No se pudo procesar el análisis: {error}")
+
     
         analysis_result = st.session_state.get("analysis_result")
         if analysis_result:
