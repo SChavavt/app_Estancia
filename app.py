@@ -3008,7 +3008,7 @@ def _check_participant_files(repo, participant_id: str, force_refresh: bool = Fa
     cache = st.session_state.setdefault(cache_key, {})
     if not force_refresh and cache.get(participant_id):
         return cache[participant_id]
-
+    
     status: dict[str, dict[str, Any]] = {}
     expected_files = _expected_participant_files(participant_id)
 
@@ -3039,6 +3039,33 @@ def _check_participant_files(repo, participant_id: str, force_refresh: bool = Fa
     st.session_state[cache_key] = cache
     return status
 
+
+def _resolve_participant_folder(repo, participant_id: str) -> Optional[str]:
+    """
+    Busca dentro de app_Estancia/data_participantes/ la carpeta real
+    cuyo nombre corresponde al participante, incluso si tiene espacios.
+    """
+    base_path = "app_Estancia/data_participantes"
+
+    # Intentar leer la carpeta base
+    try:
+        folders = repo.get_contents(base_path)
+    except Exception as e:
+        st.error(f"❌ No se pudo acceder a {base_path}: {e}")
+        return None
+
+    # Normalizar ID para comparar (quita espacios y guiones)
+    target = participant_id.replace(" ", "").replace("_", "").lower()
+
+    # Buscar coincidencia
+    for item in folders:
+        if item.type == "dir":
+            clean = item.name.replace(" ", "").replace("_", "").lower()
+            if target in clean:
+                return item.name
+
+    st.error(f"❌ No se encontró carpeta real en GitHub para {participant_id}")
+    return None
 
 def _validate_upload_file(file_obj: Any, nombre_archivo: str) -> None:
     if file_obj is None:
@@ -4343,6 +4370,21 @@ with tab2:
     if visual_wrapper_open:
         st.markdown("</div></div>", unsafe_allow_html=True)
 
+# Mapeo de etiquetas para mostrar nombres amigables de archivos
+file_labels = {
+    "excel_experimento": "Excel del Experimento",
+    "gaze": "gaze_positions.csv",
+    "timestamps": "world_timestamps.npy",
+    "fixations": "fixations.csv",
+    "fixation_report": "fixation_report.csv",
+    "blinks_file": "blinks.csv",
+    "blink_report": "blink_detection_report.csv",
+    "pupil": "pupil_positions.csv",
+    "export_info": "export_info.csv",
+    "video": "world.mp4",
+    "excel_final": "Excel Final del Análisis",
+}
+
 
 with tab_admin:
     st.header("🛠️ Panel de Administración")
@@ -4493,22 +4535,30 @@ with tab_admin:
             st.stop()
     
         status_map = _check_participant_files(repo, selected_id)
-        expected_paths = _expected_participant_files(selected_id)
-    
-        st.markdown("### 📑 Estado de archivos del participante")
-        file_labels = {
-            "excel_experimento": f"experimento_{selected_id}.xlsx",
-            "gaze": "gaze_positions.csv",
-            "timestamps": "world_timestamps.npy",
-            "fixations": "fixations.csv",
-            "fixation_report": "fixation_report.csv",
-            "blinks_file": "blinks.csv",
-            "blink_report": "blink_detection_report.csv",
-            "pupil": "pupil_positions.csv",
-            "export_info": "export_info.csv",
-            "video": "world.mp4",
-            "excel_final": f"analisis_final_{selected_id}.xlsx",
+        # Resolver carpeta real del participante
+        participant_folder = _resolve_participant_folder(repo, selected_id)
+
+        if participant_folder is None:
+            st.stop()
+
+        # Carpeta base CORRECTA
+        base = f"app_Estancia/data_participantes/{participant_folder}"
+
+        # Rutas reales en GitHub
+        expected_paths = {
+            "excel_experimento": f"{base}/excel_experimento.xlsx",
+            "gaze": f"{base}/gaze_positions.csv",
+            "timestamps": f"{base}/world_timestamps.npy",
+            "fixations": f"{base}/fixations.csv",
+            "fixation_report": f"{base}/fixation_report.csv",
+            "blinks_file": f"{base}/blinks.csv",
+            "blink_report": f"{base}/blink_detection_report.csv",
+            "pupil": f"{base}/pupil_positions.csv",
+            "export_info": f"{base}/export_info.csv",
+            "video": f"{base}/world.mp4",
+            "excel_final": f"{base}/excel_final.xlsx",
         }
+
     
         status_rows = []
         for key, label in file_labels.items():
