@@ -4613,12 +4613,27 @@ with tab_admin:
                     repo, expected_paths["gaze"], file_labels["gaze"]
                 )
 
-                # FIX → renombrar columna correcta
-                if "gaze_timestamp" in gaze_df.columns:
-                    gaze_df = gaze_df.rename(columns={"gaze_timestamp": "timestamp"})
+                # === FIX: aceptar múltiples nombres de columna de tiempo ===
+                time_candidates = ["timestamp", "gaze_timestamp", "world_timestamp", "time", "gaze_time", "ts"]
+                found = None
 
+                for c in time_candidates:
+                    if c in gaze_df.columns:
+                        found = c
+                        break
+
+                if found is None:
+                    raise ValueError(
+                        "gaze_positions.csv no contiene una columna válida de tiempo."
+                    )
+
+                # renombrar siempre a 'timestamp'
+                if found != "timestamp":
+                    gaze_df = gaze_df.rename(columns={found: "timestamp"})
+
+                # validación final
                 if "timestamp" not in gaze_df.columns:
-                    raise ValueError("El archivo gaze_positions.csv no contiene columna timestamp.")
+                    raise ValueError("No se pudo crear columna timestamp en gaze_positions.csv.")
 
                 ts_bytes, _ = _get_repo_file_content(
                     repo, expected_paths["timestamps"], file_labels["timestamps"]
