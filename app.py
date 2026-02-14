@@ -2808,16 +2808,51 @@ def integrate_app_with_pupil(
                 }
             )
 
-    df_framewise = (
-        pd.DataFrame(framewise_rows)
-        .sort_values("timestamp")
-        .reset_index(drop=True)
-    )
-    df_per_screen = (
-        pd.DataFrame(per_screen_rows)
-        .sort_values(["Modo", "Pantalla_ID", "AOI"])
-        .reset_index(drop=True)
-    )
+    if framewise_rows:
+        df_framewise = (
+            pd.DataFrame(framewise_rows)
+            .sort_values("timestamp")
+            .reset_index(drop=True)
+        )
+    else:
+        df_framewise = pd.DataFrame(
+            columns=
+            [
+                "timestamp",
+                "norm_pos_x",
+                "norm_pos_y",
+                "dt",
+                "AOI",
+                "Modo",
+                "Pantalla_ID",
+                "Pantalla",
+                "Producto_Seleccionado",
+            ]
+        )
+
+    if per_screen_rows:
+        df_per_screen = (
+            pd.DataFrame(per_screen_rows)
+            .sort_values(["Modo", "Pantalla_ID", "AOI"])
+            .reset_index(drop=True)
+        )
+    else:
+        df_per_screen = pd.DataFrame(
+            columns=
+            [
+                "Modo",
+                "Pantalla_ID",
+                "Pantalla",
+                "AOI",
+                "Producto",
+                "Componente",
+                "Dwell_Time",
+                "Fixaciones",
+                "TFF",
+                "Segment_Duration",
+                "Producto_Seleccionado",
+            ]
+        )
 
     if not df_per_screen.empty:
         df_per_mode = (
